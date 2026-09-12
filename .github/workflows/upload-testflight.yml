@@ -5,8 +5,10 @@ name: Upload latest iOS build to TestFlight
 # is needed on our end - Xcode command line tools + fastlane come preinstalled.
 #
 # Required repo secrets (Settings > Secrets and variables > Actions):
-#   UCB_API_KEY          Unity Cloud Build API key (Unity Cloud dashboard >
-#                         org settings > DevOps > Api Key)
+#   UCB_API_KEY           Long-lived Bearer token from a Unity Cloud service
+#                         account (Unity Cloud > Administration > Service
+#                         Accounts > create one > Bearer tokens tab > Add
+#                         bearer token). Needs a role with Build Automation access.
 #   UCB_ORG_ID            Unity Cloud organization id
 #   UCB_PROJECT_ID        Unity Cloud project id
 #   UCB_BUILDTARGET_ID    The iOS build target's id (visible in its Cloud Build URL)
@@ -15,11 +17,12 @@ name: Upload latest iOS build to TestFlight
 #   ASC_API_KEY_P8        Full contents of the downloaded .p8 private key file
 #
 # NOTE: this was written without a live Unity Cloud Build account to verify
-# against, from Unity's documented REST API shape. The "Find latest successful
-# build" step's JSON field path (links.download_primary.href) is the
-# documented v1 response shape - if Unity has since changed it, that step is
-# the one to inspect/fix (run it manually once with `curl -v` to see the
-# actual response before editing the python one-liner).
+# against, from Unity's documented REST API shape. If the first step 401s,
+# the service account's bearer token may need Basic auth instead
+# (base64 "keyId:secretKey" from the Keys tab, not the Bearer tokens tab) -
+# swap the Authorization header to Basic in that case. If the JSON field path
+# (links.download_primary.href) has changed, inspect /tmp/build.json's actual
+# shape (this step logs it) and fix the python one-liner.
 
 on:
   workflow_dispatch: {}
@@ -38,20 +41,20 @@ jobs:
           UCB_BUILDTARGET_ID: ${{ secrets.UCB_BUILDTARGET_ID }}
         run: |
           set -euo pipefail
-          AUTH=$(printf '%s:' "$UCB_API_KEY" | base64)
 
           BUILD_JSON=$(curl -sf \
-            -H "Authorization: Basic $AUTH" \
+            -H "Authorization: Bearer $UCB_API_KEY" \
             "https://build-api.cloud.unity3d.com/api/v1/orgs/$UCB_ORG_ID/projects/$UCB_PROJECT_ID/buildtargets/$UCB_BUILDTARGET_ID/builds/?buildStatus=success&per_page=1")
 
           echo "$BUILD_JSON" > /tmp/build.json
+          cat /tmp/build.json   # logged so a schema mismatch is visible in the run output
           DOWNLOAD_URL=$(python3 -c "
           import json
           d = json.load(open('/tmp/build.json'))[0]
           print(d['links']['download_primary']['href'])
           ")
 
-          curl -sfL -H "Authorization: Basic $AUTH" -o BlobRush.ipa "$DOWNLOAD_URL"
+          curl -sfL -H "Authorization: Bearer $UCB_API_KEY" -o BlobRush.ipa "$DOWNLOAD_URL"
           ls -la BlobRush.ipa
 
       - name: Install fastlane
