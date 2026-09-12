@@ -1,0 +1,117 @@
+name: TestFlight upload
+
+# Uploads an IPA to App Store Connect / TestFlight using xcrun altool
+# on a macOS runner. Apple doesn't ship iTMSTransporter for Linux, so
+# fastlane on ubuntu can't actually drive the upload — macos-latest
+# has altool out of the box.
+#
+# Trigger: attach the .ipa (or a .zip-wrapped .ipa) to a GitHub
+# release and publish, or run workflow_dispatch with the tag.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to pull assets from (preferred — uses latest workflow on main)"
+        required: false
+      ipa_url:
+        description: "Direct download URL of the IPA (alternative — used if tag is empty)"
+        required: false
+
+jobs:
+  upload:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Resolve IPA source
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_URL: ${{ inputs.ipa_url }}
+        run: |
+          set -e
+          mkdir -p artifact
+
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${GITHUB_REF_NAME}"
+          else
+            TAG="$INPUT_TAG"
+          fi
+
+          if [ -n "$TAG" ]; then
+            echo "Downloading assets from release tag: $TAG"
+            gh release download "$TAG" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --dir artifact \
+              --skip-existing || true
+          elif [ -n "$INPUT_URL" ]; then
+            echo "Downloading IPA from URL: $INPUT_URL"
+            curl -L --fail -o artifact/app.ipa "$INPUT_URL"
+          else
+            echo "ERROR: provide either a tag or ipa_url on workflow_dispatch"
+            exit 1
+          fi
+
+          echo "--- assets fetched ---"
+          ls -la artifact/
+
+          IPA=$(find artifact -type f -iname '*.ipa' | head -1)
+          ZIP=$(find artifact -type f -iname '*.zip' | head -1)
+
+          if [ -n "$IPA" ]; then
+            echo "Using raw .ipa: $IPA"
+            cp "$IPA" app.ipa
+          elif [ -n "$ZIP" ]; then
+            echo "Unzipping $ZIP"
+            mkdir -p unzipped
+            unzip -o "$ZIP" -d unzipped/
+            IPA_IN_ZIP=$(find unzipped -type f -iname '*.ipa' | head -1)
+            if [ -z "$IPA_IN_ZIP" ]; then
+              echo "ERROR: zip did not contain an .ipa"
+              ls -la unzipped/
+              exit 1
+            fi
+            cp "$IPA_IN_ZIP" app.ipa
+          else
+            echo "ERROR: no .ipa or .zip among assets"
+            exit 1
+          fi
+
+          test -f app.ipa
+          ls -lh app.ipa
+
+      - name: Stage App Store Connect API key
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT }}
+        run: |
+          # altool reads the key from ~/.appstoreconnect/private_keys/
+          # using the file naming convention AuthKey_<KEY_ID>.p8
+          mkdir -p ~/.appstoreconnect/private_keys
+          KEY_PATH="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+
+          # Strip any stray CR from the secret value.
+          printf '%s' "$ASC_KEY_CONTENT" | tr -d '\r' > "$KEY_PATH"
+          # Ensure trailing newline.
+          [ "$(tail -c 1 "$KEY_PATH")" = "" ] || echo "" >> "$KEY_PATH"
+
+          chmod 600 "$KEY_PATH"
+          echo "Key staged at: $KEY_PATH"
+          openssl pkey -in "$KEY_PATH" -noout -text | head -3
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$(pwd)/app.ipa" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --verbose
