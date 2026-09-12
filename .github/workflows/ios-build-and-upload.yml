@@ -1,0 +1,106 @@
+name: Build iOS and upload to TestFlight
+
+# Self-contained: builds the Unity project straight to an Xcode project on a
+# GitHub-hosted macOS runner (via game-ci/unity-builder, https://game.ci),
+# archives + exports a signed IPA with xcodebuild, then uploads to TestFlight
+# via fastlane. Does not depend on Unity Cloud Build / Build Automation's API
+# at all - that API's current auth scheme kept shifting under us, this avoids
+# needing it entirely.
+#
+# Required repo secrets (Settings > Secrets and variables > Actions):
+#   UNITY_LICENSE              Contents of a manually-activated Unity Personal
+#                               .ulf license file. See:
+#                               https://game.ci/docs/github/activation
+#   IOS_P12_BASE64              `base64 -i distribution.p12` output
+#   IOS_P12_PASSWORD            the export password you set on the .p12
+#   IOS_PROVISION_PROFILE_BASE64  `base64 -i BlobRush.mobileprovision` output
+#   ASC_KEY_ID                  App Store Connect API Key ID
+#   ASC_ISSUER_ID                App Store Connect API Issuer ID
+#   ASC_API_KEY_P8               full contents of the downloaded .p8 file
+#
+# Also edit ExportOptions.plist at the repo root: set your real Apple team ID
+# and the exact provisioning profile name you gave it in the Apple Developer
+# portal.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+jobs:
+  build-and-upload:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-iOS-${{ hashFiles('Assets/**', 'Packages/**', 'ProjectSettings/**') }}
+          restore-keys: Library-iOS-
+
+      - name: Build Unity iOS Xcode project
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        with:
+          targetPlatform: iOS
+          buildName: BlobRush
+
+      - name: Import signing certificate into a temporary keychain
+        uses: apple-actions/import-codesign-certs@v3
+        with:
+          p12-file-base64: ${{ secrets.IOS_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_P12_PASSWORD }}
+
+      - name: Install provisioning profile
+        env:
+          PROVISION_PROFILE_BASE64: ${{ secrets.IOS_PROVISION_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          echo "$PROVISION_PROFILE_BASE64" | base64 --decode \
+            > ~/Library/MobileDevice/Provisioning\ Profiles/BlobRush.mobileprovision
+
+      - name: Archive and export signed IPA
+        run: |
+          set -euo pipefail
+          cd build/iOS/iOS
+          xcodebuild -allowProvisioningUpdates \
+            -project Unity-iPhone.xcodeproj \
+            -scheme Unity-iPhone \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath "$RUNNER_TEMP/BlobRush.xcarchive" \
+            archive
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/BlobRush.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$GITHUB_WORKSPACE/ExportOptions.plist"
+
+      - name: Install fastlane
+        run: gem install fastlane -N
+
+      - name: Upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          python3 -c "
+          import json, os
+          json.dump({
+              'key_id': os.environ['ASC_KEY_ID'],
+              'issuer_id': os.environ['ASC_ISSUER_ID'],
+              'key': os.environ['ASC_API_KEY_P8'],
+              'in_house': False,
+          }, open('/tmp/asc_api_key.json', 'w'))
+          "
+          IPA_PATH=$(find "$RUNNER_TEMP/export" -name "*.ipa" | head -n1)
+          fastlane pilot upload \
+            --ipa "$IPA_PATH" \
+            --api_key_path /tmp/asc_api_key.json \
+            --skip_waiting_for_build_processing true
