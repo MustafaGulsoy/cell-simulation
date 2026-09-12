@@ -21,18 +21,11 @@ public class PlayerData
     public int massLost = 0;
     public int playtime = 0;
 
-    public PlayerData(PlayerBlob player)
+    public PlayerData()
     {
-        localUsername = player.playerHud.usernameInput.text;
-        masterVolume = player.playerSettings.masterVolumeSlider.value;
-        nightMode = player.playerSettings.nightModeToggle.isOn;
-
-        level = player.playerStats.level;
-        experience = player.playerStats.experience;
-        foodEaten = player.playerStats.foodEaten;
-        virusesEaten = player.playerStats.virusesEaten;
-        massGained = player.playerStats.massGained;
-        massLost = player.playerStats.massLost;
-        playtime = player.playerStats.playtimeTotal + Utils.secondsSinceEpoch() - player.playerStats.playtimeSession;
+        localUsername = "";
+        masterVolume = 1f;
+        nightMode = false;
+        level = 1;
     }
 }

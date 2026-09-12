@@ -4,8 +4,6 @@ using UnityEngine;
 
 public class BlobCircle : MonoBehaviour
 {
-    public static BlobCircle instance;
-
     [SerializeField] public LineRenderer lineRenderer;
     [SerializeField] private MeshRenderer meshRenderer;
     [SerializeField] private MeshFilter filter;
@@ -17,8 +15,6 @@ public class BlobCircle : MonoBehaviour
 
     private void Awake()
     {
-        instance = this;
-
         mesh = new Mesh();
         filter.mesh = mesh;
     }

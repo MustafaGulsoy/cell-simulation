@@ -1,0 +1,81 @@
+using System.Collections.Concurrent;
+using System.Net;
+using System.Threading.Tasks;
+
+namespace CellSimulator.Server.Game;
+
+/// <summary>Assigns joining players to a room instead of the server running one eternal world
+/// (with bots) whether or not anyone's playing. A join goes to the first room with space, or a
+/// fresh room is created for it; a room with no players left is torn down immediately.</summary>
+public sealed class RoomManager
+{
+    private readonly MapSize _mapSize;
+    private readonly object _gate = new();
+    private readonly List<Room> _rooms = new();
+    private readonly ConcurrentDictionary<IPEndPoint, Room> _roomByEndpoint = new();
+
+    public RoomManager(MapSize mapSize)
+    {
+        _mapSize = mapSize;
+    }
+
+    public IReadOnlyList<Room> Rooms
+    {
+        get { lock (_gate) { return _rooms.ToArray(); } }
+    }
+
+    public Room JoinOrCreateRoom(IPEndPoint endPoint)
+    {
+        lock (_gate)
+        {
+            var room = _rooms.FirstOrDefault(r => !r.IsFull);
+            if (room == null)
+            {
+                room = new Room(_mapSize);
+                _rooms.Add(room);
+            }
+            _roomByEndpoint[endPoint] = room;
+            return room;
+        }
+    }
+
+    public bool TryGetRoom(IPEndPoint endPoint, out Room room) => _roomByEndpoint.TryGetValue(endPoint, out room!);
+
+    /// <summary>Ticks every active room, drops stale sessions, and closes any room that's now empty.</summary>
+    public void Tick(float dt, TimeSpan staleTimeout)
+    {
+        Room[] snapshot;
+        lock (_gate)
+        {
+            snapshot = _rooms.ToArray();
+        }
+
+        // Rooms don't share any state (each owns its own GameWorld, internally lock-protected),
+        // so independent rooms can tick across the box's cores instead of queuing behind each
+        // other on one thread - this is what actually lets room count scale with CPU count.
+        Parallel.ForEach(snapshot, room => room.World.Tick(dt));
+
+        lock (_gate)
+        {
+            for (int i = _rooms.Count - 1; i >= 0; i--)
+            {
+                var room = _rooms[i];
+
+                foreach (var staleId in room.World.RemoveStalePlayers(staleTimeout))
+                {
+                    var stale = room.Sessions.FirstOrDefault(kv => kv.Value == staleId);
+                    if (!stale.Equals(default(KeyValuePair<IPEndPoint, uint>)))
+                    {
+                        room.Sessions.TryRemove(stale.Key, out _);
+                        _roomByEndpoint.TryRemove(stale.Key, out _);
+                    }
+                }
+
+                if (room.World.Players.Count == 0)
+                {
+                    _rooms.RemoveAt(i);
+                }
+            }
+        }
+    }
+}

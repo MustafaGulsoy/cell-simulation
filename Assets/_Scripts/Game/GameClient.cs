@@ -1,0 +1,357 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading;
+using UnityEngine;
+
+// Talks the custom UDP protocol to Server/CellSimulator.Server (see its Net/Protocol.cs - this
+// class must stay byte-for-byte in sync with it). Replaces Game.cs/Map.cs's old local-spawn
+// model and Netcode for GameObjects entirely: the server is authoritative for every entity's
+// position/scale/mass/color, this class only mirrors it visually.
+public class GameClient : MonoBehaviour
+{
+    private enum ClientMsg : byte { Join = 1, Input = 2 }
+    private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3 }
+
+    public static GameClient instance;
+
+    [SerializeField] private string serverHost = MainMenuHandler.DEFAULT_SERVER_IP;
+    [SerializeField] private int serverPort = 7778;
+
+    [SerializeField] private GameObject playerPrefab;
+    [SerializeField] private GameObject aiPrefab;
+    [SerializeField] private GameObject foodPrefab;
+
+    private UdpClient socket;
+    private Thread receiveThread;
+    private volatile bool running;
+
+    private uint myEntityId;
+    private bool welcomed;
+
+    private readonly Dictionary<uint, PlayerBlob> players = new Dictionary<uint, PlayerBlob>();
+    private readonly Dictionary<uint, AIBlob> bots = new Dictionary<uint, AIBlob>();
+    private readonly Dictionary<uint, GameObject> food = new Dictionary<uint, GameObject>();
+
+    private readonly Queue<Action> mainThreadActions = new Queue<Action>();
+    private readonly object queueLock = new object();
+
+    private struct EntityState
+    {
+        public uint Id;
+        public byte Type;
+        public Vector2 Position;
+        public float Scale;
+        public float Mass;
+        public Color32 Color;
+        public string Name;
+    }
+
+    private void Awake()
+    {
+        instance = this;
+    }
+
+    private void Start()
+    {
+        socket = new UdpClient();
+        socket.Connect(serverHost, serverPort);
+
+        running = true;
+        receiveThread = new Thread(ReceiveLoop) { IsBackground = true };
+        receiveThread.Start();
+
+        SendJoin(PlayerPrefs.GetString("username", ""));
+    }
+
+    private void OnDestroy()
+    {
+        running = false;
+        socket?.Close();
+    }
+
+    private void Update()
+    {
+        lock (queueLock)
+        {
+            while (mainThreadActions.Count > 0)
+            {
+                mainThreadActions.Dequeue().Invoke();
+            }
+        }
+    }
+
+    private void FixedUpdate()
+    {
+        if (!welcomed || !players.TryGetValue(myEntityId, out var myBlob))
+        {
+            return;
+        }
+
+        Joystick joystick = myBlob.playerMovement != null ? myBlob.playerMovement.joystick : null;
+        if (joystick == null)
+        {
+            return;
+        }
+
+        Vector2 dir = joystick.Direction;
+        SendInput(dir);
+
+        if (dir != Vector2.zero && myBlob.playerHud != null)
+        {
+            float angle = Mathf.Atan2(dir.y, dir.x) * Mathf.Rad2Deg - 90f;
+            myBlob.playerHud.blobPointer.rotation = Quaternion.AngleAxis(angle, Vector3.forward);
+        }
+    }
+
+    // ---- sending ----
+
+    private void SendJoin(string username)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write((byte)ClientMsg.Join);
+        WriteString(w, username);
+        Send(ms.ToArray());
+    }
+
+    private void SendInput(Vector2 dir)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write((byte)ClientMsg.Input);
+        w.Write(dir.x);
+        w.Write(dir.y);
+        Send(ms.ToArray());
+    }
+
+    private void Send(byte[] data)
+    {
+        try { socket.Send(data, data.Length); } catch (SocketException) { } catch (ObjectDisposedException) { }
+    }
+
+    // ---- receiving (background thread) ----
+
+    private void ReceiveLoop()
+    {
+        var remote = new IPEndPoint(IPAddress.Any, 0);
+        while (running)
+        {
+            byte[] data;
+            try
+            {
+                data = socket.Receive(ref remote);
+            }
+            catch (SocketException)
+            {
+                break;
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+
+            try
+            {
+                Decode(data);
+            }
+            catch (EndOfStreamException)
+            {
+                // malformed/short packet - ignore
+            }
+        }
+    }
+
+    private void Decode(byte[] data)
+    {
+        using var ms = new MemoryStream(data);
+        using var r = new BinaryReader(ms);
+        var type = (ServerMsg)r.ReadByte();
+
+        switch (type)
+        {
+            case ServerMsg.Welcome:
+            {
+                uint id = r.ReadUInt32();
+                int half = r.ReadInt32();
+                Enqueue(() => OnWelcome(id, half));
+                break;
+            }
+            case ServerMsg.Snapshot:
+            {
+                uint tick = r.ReadUInt32();
+
+                byte leaderboardCount = r.ReadByte();
+                var leaderboard = new List<(string Name, float Mass)>(leaderboardCount);
+                for (int i = 0; i < leaderboardCount; i++)
+                {
+                    string name = ReadString(r);
+                    float mass = r.ReadSingle();
+                    leaderboard.Add((name, mass));
+                }
+
+                ushort entityCount = r.ReadUInt16();
+                var entities = new List<EntityState>(entityCount);
+                for (int i = 0; i < entityCount; i++)
+                {
+                    entities.Add(ReadEntity(r));
+                }
+
+                ushort foodCount = r.ReadUInt16();
+                var foodUpdates = new List<(uint id, Vector2 pos)>(foodCount);
+                for (int i = 0; i < foodCount; i++)
+                {
+                    foodUpdates.Add((r.ReadUInt32(), new Vector2(r.ReadSingle(), r.ReadSingle())));
+                }
+
+                Enqueue(() => OnSnapshot(entities, foodUpdates, leaderboard));
+                break;
+            }
+            case ServerMsg.FoodFull:
+            {
+                ushort count = r.ReadUInt16();
+                var chunk = new List<(uint id, Vector2 pos)>(count);
+                for (int i = 0; i < count; i++)
+                {
+                    chunk.Add((r.ReadUInt32(), new Vector2(r.ReadSingle(), r.ReadSingle())));
+                }
+                Enqueue(() => ApplyFoodUpdates(chunk));
+                break;
+            }
+        }
+    }
+
+    private static EntityState ReadEntity(BinaryReader r)
+    {
+        return new EntityState
+        {
+            Id = r.ReadUInt32(),
+            Type = r.ReadByte(),
+            Position = new Vector2(r.ReadSingle(), r.ReadSingle()),
+            Scale = r.ReadSingle(),
+            Mass = r.ReadSingle(),
+            Color = new Color32(r.ReadByte(), r.ReadByte(), r.ReadByte(), r.ReadByte()),
+            Name = ReadString(r),
+        };
+    }
+
+    private static void WriteString(BinaryWriter w, string s)
+    {
+        var bytes = Encoding.UTF8.GetBytes(s ?? "");
+        if (bytes.Length > 255) Array.Resize(ref bytes, 255);
+        w.Write((byte)bytes.Length);
+        w.Write(bytes);
+    }
+
+    private static string ReadString(BinaryReader r)
+    {
+        byte len = r.ReadByte();
+        return Encoding.UTF8.GetString(r.ReadBytes(len));
+    }
+
+    private void Enqueue(Action action)
+    {
+        lock (queueLock)
+        {
+            mainThreadActions.Enqueue(action);
+        }
+    }
+
+    // ---- applying state (main thread) ----
+
+    private void OnWelcome(uint id, int halfMapSize)
+    {
+        myEntityId = id;
+        welcomed = true;
+
+        if (Map.instance != null)
+        {
+            Map.instance.ApplyMapSize(halfMapSize);
+        }
+    }
+
+    private void OnSnapshot(List<EntityState> entities, List<(uint id, Vector2 pos)> foodUpdates, List<(string Name, float Mass)> leaderboard)
+    {
+        var seenPlayers = new HashSet<uint>();
+        var seenBots = new HashSet<uint>();
+
+        foreach (var e in entities)
+        {
+            if (e.Type == 0) // EntityType.Player
+            {
+                seenPlayers.Add(e.Id);
+                if (!players.TryGetValue(e.Id, out var blob))
+                {
+                    blob = Instantiate(playerPrefab).GetComponent<PlayerBlob>();
+                    blob.Init(e.Id, e.Id == myEntityId, e.Name);
+                    players[e.Id] = blob;
+                }
+                blob.username = e.Name;
+                blob.ApplyState(e.Position, e.Scale, e.Color, e.Mass);
+            }
+            else // EntityType.Ai
+            {
+                seenBots.Add(e.Id);
+                if (!bots.TryGetValue(e.Id, out var blob))
+                {
+                    blob = Instantiate(aiPrefab).GetComponent<AIBlob>();
+                    blob.Init(e.Id, e.Name);
+                    bots[e.Id] = blob;
+                }
+                blob.ApplyState(e.Position, e.Scale, e.Color, e.Mass);
+            }
+        }
+
+        RemoveMissing(players, seenPlayers);
+        RemoveMissing(bots, seenBots);
+
+        ApplyFoodUpdates(foodUpdates);
+
+        if (players.TryGetValue(myEntityId, out var mine) && mine.playerHud != null)
+        {
+            mine.playerHud.SetLeaderboard(leaderboard);
+        }
+    }
+
+    private void ApplyFoodUpdates(List<(uint id, Vector2 pos)> updates)
+    {
+        foreach (var (id, pos) in updates)
+        {
+            if (!food.TryGetValue(id, out var obj))
+            {
+                obj = Instantiate(foodPrefab);
+                food[id] = obj;
+            }
+            obj.transform.position = pos;
+        }
+    }
+
+    private static void RemoveMissing<T>(Dictionary<uint, T> dict, HashSet<uint> seen) where T : Component
+    {
+        List<uint> toRemove = null;
+        foreach (var kv in dict)
+        {
+            if (!seen.Contains(kv.Key))
+            {
+                (toRemove ??= new List<uint>()).Add(kv.Key);
+            }
+        }
+
+        if (toRemove == null)
+        {
+            return;
+        }
+
+        foreach (var id in toRemove)
+        {
+            if (dict[id] != null)
+            {
+                Destroy(dict[id].gameObject);
+            }
+            dict.Remove(id);
+        }
+    }
+}

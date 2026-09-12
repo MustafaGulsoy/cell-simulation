@@ -1,37 +1,26 @@
+using System;
 using System.IO;
 using UnityEngine;
-using System.Runtime.Serialization.Formatters.Binary;
 
 public static class PlayerHandleData
 {
-    public static void Save(PlayerBlob player)
+    private static string SavePath => Path.Combine(Application.persistentDataPath, "player.json");
+
+    public static PlayerData LoadOrDefault()
     {
-        BinaryFormatter formatter = new BinaryFormatter();
-        string path = Application.persistentDataPath + "/player.em";
-        FileStream stream = new FileStream(path, FileMode.Create);
-
-        PlayerData data = new PlayerData(player);
-
-        formatter.Serialize(stream, data);
-
-        stream.Close();
-    }
-
-    public static PlayerData Load(PlayerBlob player)
-    {
-        string path = Application.persistentDataPath + "/player.em";
-        if(!File.Exists(path))
+        try
         {
-            Save(player);
+            if(!File.Exists(SavePath))
+            {
+                return new PlayerData();
+            }
+
+            return JsonUtility.FromJson<PlayerData>(File.ReadAllText(SavePath));
         }
-
-        BinaryFormatter formatter = new BinaryFormatter();
-        FileStream stream = new FileStream(path, FileMode.Open);
-
-        PlayerData data = (PlayerData)formatter.Deserialize(stream);
-
-        stream.Close();
-
-        return data;
+        catch (Exception e)
+        {
+            Debug.LogError($"Failed to load player data: {e}");
+            return new PlayerData();
+        }
     }
 }

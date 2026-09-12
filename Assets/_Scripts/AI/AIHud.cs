@@ -1,14 +1,8 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
 
 public class AIHud : MonoBehaviour
 {
-    public static AIHud instance;
-
-    [SerializeField] private AIBlob aiBlob;
-
     [SerializeField] public Canvas blobDetailCanvas;
 
     [SerializeField] private TextMeshProUGUI blobName;
@@ -16,14 +10,7 @@ public class AIHud : MonoBehaviour
 
     private void Awake()
     {
-        instance = this;
-
         blobDetailCanvas.worldCamera = Camera.main;
-    }
-
-    private void Start()
-    {
-        Spawn();
     }
 
     private void LateUpdate()
@@ -34,47 +21,17 @@ public class AIHud : MonoBehaviour
         }
     }
 
-    public void Spawn()
+    public void Spawn(string username)
     {
-        if(aiBlob.spawned)
-        {
-            return;
-        }
-
-        blobScore.rectTransform.localPosition = Utils.scoreWithNamePosition;
-
-        string text = Utils.GenerateRandomAlphanumericString();
-        aiBlob.username = text;
-        aiBlob.universalPlayer.username = text;
-
-        blobName.text = aiBlob.username;
+        blobName.text = username;
         blobName.gameObject.SetActive(true);
 
-        blobScore.text = aiBlob.totalMass.ToString("0");
-        blobScore.gameObject.SetActive(true);
-    }
-
-    public void Despawn(bool bypass = false)
-    {
-        if(!aiBlob.spawned && !bypass)
-        {
-            return;
-        }
-        
-        blobName.gameObject.SetActive(false);
-        blobName.text = "";
-
-        blobScore.gameObject.SetActive(false);
         blobScore.text = "";
+        blobScore.gameObject.SetActive(true);
     }
 
     public void setBlobScoreText(float score)
     {
-        if(!aiBlob.spawned)
-        {
-            return;
-        }
-
         blobScore.SetText(score.ToString("0"));
     }
 }

@@ -16,7 +16,7 @@ public class StatsMenu : MonoBehaviour
 
     private void Awake()
     {
-        PlayerData data = PlayerHandleData.Load(PlayerBlob.instance);
+        PlayerData data = PlayerHandleData.LoadOrDefault();
         int level = data.level;
         int experience = data.experience;
         int experienceNeeded = Utils.GetNeededExperience(level);
