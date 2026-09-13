@@ -1,4 +1,4 @@
-# Cell-Simulator
+# Blob Rush
 Simple and clean [Agar.io](https://agar.io/) type game made in [Unity 2D](https://unity.com/) for Android devices. The project currently targets Unity version 6000.5.3f1 (originally started on 2021.3.22f).
 
 Note that this was my first "finished" project so the code is pretty bad!
