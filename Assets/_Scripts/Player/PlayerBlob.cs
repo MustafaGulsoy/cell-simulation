@@ -59,7 +59,13 @@ public class PlayerBlob : MonoBehaviour
         }
         else
         {
-            playerHud.gameObject.SetActive(false);
+            // playerHud is a component on THIS SAME root GameObject (not a separate child) -
+            // playerHud.gameObject.SetActive(false) was deactivating the whole remote player,
+            // not just its HUD, which is why other real players never rendered at all (bots don't
+            // have this problem since AIHud's canvas lives on an actual child object). Hide the
+            // HUD canvases specifically instead.
+            playerHud.setIdleCanvasActivity(false);
+            playerHud.setPlayingCanvasActivity(false);
             virtualCamera.gameObject.SetActive(false);
         }
     }
