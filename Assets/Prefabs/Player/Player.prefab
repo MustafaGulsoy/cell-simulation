@@ -1773,6 +1773,8 @@ MonoBehaviour:
   virtualCamera: {fileID: 713397021164229294}
   sortingGroup: {fileID: 4288051904803934568}
   blobDetailCanvas: {fileID: 953217193008756311}
+  splitButton: {fileID: 713397021428528423}
+  ejectButton: {fileID: 713397021814766416}
   currentColor: {r: 0, g: 0, b: 0, a: 0}
 --- !u!114 &713397021523508394
 MonoBehaviour:

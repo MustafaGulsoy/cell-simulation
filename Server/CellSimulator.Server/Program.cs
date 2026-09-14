@@ -22,8 +22,10 @@ app.MapGet("/stats", (RoomManager rooms) => rooms.Rooms.Select(r => new
     players = r.World.Players.Count,
     capacity = r.World.PlayerCapacity,
     bots = r.World.Bots.Count,
+    viruses = r.World.Viruses.Count,
     food = r.World.AllFood().Count,
     halfMapSize = r.World.HalfMapSize,
+    mapSize = r.World.Size.ToString(),
 }));
 
 app.MapGet("/leaderboard", (RoomManager rooms) => rooms.Rooms.Select(r => new

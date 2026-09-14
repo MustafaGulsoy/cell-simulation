@@ -54,7 +54,7 @@ public sealed class UdpServerService : BackgroundService
         switch (type)
         {
             case ClientMsg.Join:
-                var room = _rooms.JoinOrCreateRoom(from);
+                var room = _rooms.JoinOrCreateRoom(from, join.MapSize);
                 var player = room.World.AddPlayer(join.Username, from);
                 room.Sessions[from] = player.Id;
                 var welcome = Protocol.EncodeWelcome(player.Id, room.World.HalfMapSize);
@@ -75,6 +75,20 @@ public sealed class UdpServerService : BackgroundService
                 if (_rooms.TryGetRoom(from, out var existingRoom) && existingRoom.Sessions.TryGetValue(from, out var id))
                 {
                     existingRoom.World.SetPlayerInput(id, input.Direction);
+                }
+                break;
+
+            case ClientMsg.Split:
+                if (_rooms.TryGetRoom(from, out var splitRoom) && splitRoom.Sessions.TryGetValue(from, out var splitId))
+                {
+                    splitRoom.World.SplitPlayer(splitId);
+                }
+                break;
+
+            case ClientMsg.Eject:
+                if (_rooms.TryGetRoom(from, out var ejectRoom) && ejectRoom.Sessions.TryGetValue(from, out var ejectId))
+                {
+                    ejectRoom.World.EjectMass(ejectId);
                 }
                 break;
         }

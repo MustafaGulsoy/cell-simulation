@@ -6,6 +6,7 @@ public enum EntityType : byte
 {
     Player = 0,
     Ai = 1,
+    Virus = 2,
 }
 
 public struct Rgba
@@ -33,6 +34,10 @@ public abstract class Entity
     public Rgba Color;
     public string Name = "";
 
+    // Decaying outward impulse right after a split/virus-pop; only PlayerEntity ever sets this,
+    // but living on the base type keeps GameWorld.MoveEntity<T> generic over players/bots/viruses.
+    public Vector2 SplitVelocity;
+
     public float Scale => Rules.CalculateScale(Mass);
 }
 
@@ -40,5 +45,6 @@ public sealed class FoodItem
 {
     public uint Id;
     public Vector2 Position;
+    public Vector2 Velocity; // nonzero only for ejected mass, decays to zero then behaves like normal food
     public const float Radius = 1.25f; // matches Food.SCALE / 2 in the original Unity project
 }

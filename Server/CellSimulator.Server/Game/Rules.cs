@@ -32,6 +32,28 @@ public static class Rules
 
     public const float FoodMassGain = 1f;
 
+    // Split: press-to-split doubles cell count (every eligible cell splits at once, agar-style).
+    public const float SplitMinMass = 32f;
+    public const int MaxPiecesPerPlayer = 16;
+    public const float SplitImpulseSpeed = 30f;
+    public const float SplitVelocityDecayPerSecond = 3f;
+    public const float MergeCooldownSeconds = 15f;
+    private static readonly TimeSpan SplitEjectCooldown = TimeSpan.FromMilliseconds(200);
+    public static TimeSpan SplitCooldown => SplitEjectCooldown;
+    public static TimeSpan EjectCooldown => SplitEjectCooldown;
+
+    // Eject mass (W-key food throw).
+    public const float EjectMinMass = 40f;
+    public const float EjectMassAmount = 14f;
+    public const float EjectSpeed = 45f;
+    public const float EjectVelocityDecayPerSecond = 2f;
+
+    // Virus/explosion hazard: only pops cells strictly bigger than it; too-small cells pass through.
+    public const float VirusScale = 50f;
+    public static readonly float VirusMass = VirusScale * VirusScale / ScaleMultiplier;
+    public const int VirusSplitPieces = 8; // total pieces the popped cell becomes (capped by MaxPiecesPerPlayer)
+    public static readonly Rgba VirusColor = new() { R = 60, G = 220, B = 90, A = 255 };
+
     public static float CalculateScale(float mass)
     {
         float c = MathF.Sqrt(mass * ScaleMultiplier);
@@ -43,10 +65,14 @@ public static class Rules
     /// <summary>True if an entity with eaterScale can eat one with preyScale (must be at least ~15% bigger).</summary>
     public static bool CanEat(float eaterScale, float preyScale) => eaterScale > preyScale * ScaleMultiplier;
 
+    // Old formula (sqrt(5000/((scale+6)*0.01))) only dropped below MovementSpeedMax past
+    // scale~834 - unreachable since BlobScaleMax is 80, so every real blob clamped to the same
+    // max speed regardless of size and "slows down as it grows" never actually happened. Linear
+    // interpolation across the real [BlobScaleMin, BlobScaleMax] range instead.
     public static float MovementSpeedForScale(float scale)
     {
-        float speed = MathF.Sqrt(5000f / ((scale + 6f) * 0.01f));
-        return Math.Clamp(speed, MovementSpeedMin, MovementSpeedMax);
+        float t = Math.Clamp((scale - BlobScaleMin) / (BlobScaleMax - BlobScaleMin), 0f, 1f);
+        return MovementSpeedMax - (MovementSpeedMax - MovementSpeedMin) * t;
     }
 }
 
@@ -60,12 +86,14 @@ public enum MapSize
 
 public static class MapSizes
 {
+    // +50% over the original sizes (100/200/400/600/1000 -> 150/300/600/900/1500 scaled from the
+    // 200/400/600/1000 set actually shipped).
     public static int SideLength(MapSize size) => size switch
     {
-        MapSize.Huge => 1000,
-        MapSize.Large => 600,
-        MapSize.Medium => 400,
-        MapSize.Small => 200,
-        _ => 200,
+        MapSize.Huge => 1500,
+        MapSize.Large => 900,
+        MapSize.Medium => 600,
+        MapSize.Small => 300,
+        _ => 300,
     };
 }

@@ -20,5 +20,6 @@ public sealed class Room
         World.Initialize();
     }
 
-    public bool IsFull => World.Players.Count >= World.PlayerCapacity;
+    public bool IsFull => World.DistinctPlayerCount >= World.PlayerCapacity;
+    public MapSize MapSize => World.Size;
 }

@@ -292,6 +292,7 @@ MonoBehaviour:
   playerPrefab: {fileID: 713397021523508384, guid: da5c5b8cacc08b243bd7e738f70a5fac, type: 3}
   aiPrefab: {fileID: 713397021523508384, guid: 41900f680a6419f4ba807d1843689eea, type: 3}
   foodPrefab: {fileID: 7500522226422816488, guid: 6bc2845ceabab6149bc45555ae52cc6e, type: 3}
+  virusPrefab: {fileID: 7659173354562544528, guid: dd278fb7a9c365449b9e82bd52d4d66c, type: 3}
 --- !u!4 &143840617
 Transform:
   m_ObjectHideFlags: 0

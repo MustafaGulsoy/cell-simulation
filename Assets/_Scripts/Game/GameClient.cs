@@ -13,8 +13,9 @@ using UnityEngine;
 // position/scale/mass/color, this class only mirrors it visually.
 public class GameClient : MonoBehaviour
 {
-    private enum ClientMsg : byte { Join = 1, Input = 2 }
+    private enum ClientMsg : byte { Join = 1, Input = 2, Split = 3, Eject = 4 }
     private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3 }
+    private const byte EntityTypeVirus = 2;
 
     public static GameClient instance;
 
@@ -24,6 +25,7 @@ public class GameClient : MonoBehaviour
     [SerializeField] private GameObject playerPrefab;
     [SerializeField] private GameObject aiPrefab;
     [SerializeField] private GameObject foodPrefab;
+    [SerializeField] private GameObject virusPrefab;
 
     private UdpClient socket;
     private Thread receiveThread;
@@ -34,6 +36,7 @@ public class GameClient : MonoBehaviour
 
     private readonly Dictionary<uint, PlayerBlob> players = new Dictionary<uint, PlayerBlob>();
     private readonly Dictionary<uint, AIBlob> bots = new Dictionary<uint, AIBlob>();
+    private readonly Dictionary<uint, VirusBlob> viruses = new Dictionary<uint, VirusBlob>();
     private readonly Dictionary<uint, GameObject> food = new Dictionary<uint, GameObject>();
 
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
@@ -115,6 +118,7 @@ public class GameClient : MonoBehaviour
         using var w = new BinaryWriter(ms);
         w.Write((byte)ClientMsg.Join);
         WriteString(w, username);
+        w.Write((byte)PlayerPrefs.GetInt(MainMenuHandler.MapSizePrefKey, 3));
         Send(ms.ToArray());
     }
 
@@ -126,6 +130,17 @@ public class GameClient : MonoBehaviour
         w.Write(dir.x);
         w.Write(dir.y);
         Send(ms.ToArray());
+    }
+
+    /// <summary>Server validates mass/cooldown - this just requests it, the server can reject silently.</summary>
+    public void SendSplit()
+    {
+        Send(new[] { (byte)ClientMsg.Split });
+    }
+
+    public void SendEject()
+    {
+        Send(new[] { (byte)ClientMsg.Eject });
     }
 
     private void Send(byte[] data)
@@ -277,6 +292,7 @@ public class GameClient : MonoBehaviour
     {
         var seenPlayers = new HashSet<uint>();
         var seenBots = new HashSet<uint>();
+        var seenViruses = new HashSet<uint>();
 
         foreach (var e in entities)
         {
@@ -291,6 +307,17 @@ public class GameClient : MonoBehaviour
                 }
                 blob.username = e.Name;
                 blob.ApplyState(e.Position, e.Scale, e.Color, e.Mass);
+            }
+            else if (e.Type == EntityTypeVirus)
+            {
+                seenViruses.Add(e.Id);
+                if (!viruses.TryGetValue(e.Id, out var blob))
+                {
+                    blob = Instantiate(virusPrefab).GetComponent<VirusBlob>();
+                    blob.Init(e.Id);
+                    viruses[e.Id] = blob;
+                }
+                blob.ApplyState(e.Position, e.Scale, e.Color);
             }
             else // EntityType.Ai
             {
@@ -307,6 +334,7 @@ public class GameClient : MonoBehaviour
 
         RemoveMissing(players, seenPlayers);
         RemoveMissing(bots, seenBots);
+        RemoveMissing(viruses, seenViruses);
 
         ApplyFoodUpdates(foodUpdates);
 

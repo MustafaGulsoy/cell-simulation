@@ -8,6 +8,8 @@ public enum ClientMsg : byte
 {
     Join = 1,
     Input = 2,
+    Split = 3,
+    Eject = 4,
 }
 
 public enum ServerMsg : byte
@@ -34,6 +36,7 @@ public static class Protocol
         uint tick,
         IReadOnlyCollection<PlayerEntity> players,
         IReadOnlyCollection<AiEntity> bots,
+        IReadOnlyCollection<VirusEntity> viruses,
         IReadOnlyCollection<FoodItem> changedFood,
         List<(string Name, float Mass)> leaderboard)
     {
@@ -49,9 +52,10 @@ public static class Protocol
             w.Write(mass);
         }
 
-        w.Write((ushort)(players.Count + bots.Count));
+        w.Write((ushort)(players.Count + bots.Count + viruses.Count));
         foreach (var p in players) WriteEntity(w, p.Id, p.Type, p.Position, p.Scale, p.Mass, p.Color, p.Name);
         foreach (var a in bots) WriteEntity(w, a.Id, a.Type, a.Position, a.Scale, a.Mass, a.Color, a.Name);
+        foreach (var v in viruses) WriteEntity(w, v.Id, v.Type, v.Position, v.Scale, v.Mass, v.Color, v.Name);
 
         w.Write((ushort)changedFood.Count);
         foreach (var f in changedFood)
@@ -108,7 +112,7 @@ public static class Protocol
         return Encoding.UTF8.GetString(r.ReadBytes(len));
     }
 
-    public readonly record struct JoinMsg(string Username);
+    public readonly record struct JoinMsg(string Username, MapSize MapSize);
     public readonly record struct InputMsg(Vector2 Direction);
 
     public static bool TryDecodeClientMsg(byte[] data, out ClientMsg type, out JoinMsg join, out InputMsg input)
@@ -127,10 +131,15 @@ public static class Protocol
             switch (type)
             {
                 case ClientMsg.Join:
-                    join = new JoinMsg(ReadString(r));
+                    string username = ReadString(r);
+                    var mapSize = (MapSize)r.ReadByte();
+                    join = new JoinMsg(username, mapSize);
                     return true;
                 case ClientMsg.Input:
                     input = new InputMsg(new Vector2(r.ReadSingle(), r.ReadSingle()));
+                    return true;
+                case ClientMsg.Split:
+                case ClientMsg.Eject:
                     return true;
                 default:
                     return false;

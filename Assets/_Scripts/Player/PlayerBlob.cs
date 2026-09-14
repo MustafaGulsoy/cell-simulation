@@ -1,6 +1,7 @@
 using UnityEngine;
 using Unity.Cinemachine;
 using UnityEngine.Rendering;
+using UnityEngine.UI;
 
 // Thin visual proxy - all simulation (movement, growth, eating, AI) now lives on the .NET
 // server (Server/CellSimulator.Server). GameClient.cs drives Init()/ApplyState() from
@@ -26,6 +27,12 @@ public class PlayerBlob : MonoBehaviour
     [SerializeField] private SortingGroup sortingGroup;
     [SerializeField] public Canvas blobDetailCanvas;
 
+    // Split/eject only take effect for the local player - for a remote PlayerBlob, playerHud
+    // (and these buttons under it) stays inactive entirely, so wiring them unconditionally here
+    // is harmless.
+    [SerializeField] private Button splitButton;
+    [SerializeField] private Button ejectButton;
+
     public Color currentColor;
     private bool colorInitialized;
     private float currentScale = -1f;
@@ -33,6 +40,8 @@ public class PlayerBlob : MonoBehaviour
     private void Awake()
     {
         blobDetailCanvas.worldCamera = Camera.main;
+        if (splitButton != null) splitButton.onClick.AddListener(() => GameClient.instance?.SendSplit());
+        if (ejectButton != null) ejectButton.onClick.AddListener(() => GameClient.instance?.SendEject());
     }
 
     public void Init(uint id, bool mine, string name)

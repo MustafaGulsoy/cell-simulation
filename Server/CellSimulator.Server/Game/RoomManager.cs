@@ -9,14 +9,14 @@ namespace CellSimulator.Server.Game;
 /// fresh room is created for it; a room with no players left is torn down immediately.</summary>
 public sealed class RoomManager
 {
-    private readonly MapSize _mapSize;
+    private readonly MapSize _defaultMapSize;
     private readonly object _gate = new();
     private readonly List<Room> _rooms = new();
     private readonly ConcurrentDictionary<IPEndPoint, Room> _roomByEndpoint = new();
 
-    public RoomManager(MapSize mapSize)
+    public RoomManager(MapSize defaultMapSize)
     {
-        _mapSize = mapSize;
+        _defaultMapSize = defaultMapSize;
     }
 
     public IReadOnlyList<Room> Rooms
@@ -24,14 +24,18 @@ public sealed class RoomManager
         get { lock (_gate) { return _rooms.ToArray(); } }
     }
 
-    public Room JoinOrCreateRoom(IPEndPoint endPoint)
+    /// <summary>requestedSize comes from the client's Join packet (its map-size dropdown
+    /// selection) - only rooms of that same size are matched/created, so "Small" players never
+    /// land in a "Huge" room and vice versa.</summary>
+    public Room JoinOrCreateRoom(IPEndPoint endPoint, MapSize? requestedSize = null)
     {
+        var size = requestedSize ?? _defaultMapSize;
         lock (_gate)
         {
-            var room = _rooms.FirstOrDefault(r => !r.IsFull);
+            var room = _rooms.FirstOrDefault(r => !r.IsFull && r.MapSize == size);
             if (room == null)
             {
-                room = new Room(_mapSize);
+                room = new Room(size);
                 _rooms.Add(room);
             }
             _roomByEndpoint[endPoint] = room;

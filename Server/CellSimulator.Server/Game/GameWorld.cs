@@ -15,22 +15,30 @@ public sealed class GameWorld
 
     private readonly Dictionary<uint, PlayerEntity> _players = new();
     private readonly Dictionary<uint, AiEntity> _bots = new();
+    private readonly Dictionary<uint, VirusEntity> _viruses = new();
     private readonly Dictionary<uint, FoodItem> _food = new();
     private readonly List<FoodItem> _foodChangedThisTick = new();
 
+    private readonly Dictionary<uint, DateTime> _lastSplitUtc = new();
+    private readonly Dictionary<uint, DateTime> _lastEjectUtc = new();
+
     private uint _nextId = 1;
 
+    public MapSize Size { get; }
     public int HalfMapSize { get; }
     public int BotCount { get; }
     public int FoodCount { get; }
+    public int VirusCount { get; }
     public int PlayerCapacity { get; }
 
     public GameWorld(MapSize mapSize)
     {
         int side = MapSizes.SideLength(mapSize);
+        Size = mapSize;
         HalfMapSize = side / 2;
         BotCount = Math.Max(1, side / 60);
         FoodCount = Math.Max(50, side * 7 - 1000);
+        VirusCount = Math.Max(3, side / 150);
         PlayerCapacity = Math.Max(2, side / 20);
     }
 
@@ -48,7 +56,25 @@ public sealed class GameWorld
             {
                 SpawnBot();
             }
+
+            for (int i = 0; i < VirusCount; i++)
+            {
+                SpawnVirus();
+            }
         }
+    }
+
+    private void SpawnVirus()
+    {
+        var virus = new VirusEntity
+        {
+            Id = _nextId++,
+            Position = RandomPosition(),
+            Mass = Rules.VirusMass,
+            Color = Rules.VirusColor,
+            Name = "Virus",
+        };
+        _viruses[virus.Id] = virus;
     }
 
     private Vector2 RandomPosition()
@@ -85,6 +111,7 @@ public sealed class GameWorld
                 Name = string.IsNullOrWhiteSpace(name) ? "Unnamed" : name,
                 EndPoint = endPoint,
             };
+            player.GroupId = player.Id;
             _players[player.Id] = player;
             return player;
         }
@@ -94,7 +121,12 @@ public sealed class GameWorld
     {
         lock (_gate)
         {
-            _players.Remove(id);
+            // id is the group's original/primary Id (RoomManager only ever tracks that one in
+            // Sessions), so a disconnect must drop every split piece the player currently owns.
+            var toRemove = _players.Values.Where(p => p.GroupId == id).Select(p => p.Id).ToList();
+            foreach (var pid in toRemove) _players.Remove(pid);
+            _lastSplitUtc.Remove(id);
+            _lastEjectUtc.Remove(id);
         }
     }
 
@@ -110,17 +142,108 @@ public sealed class GameWorld
         }
     }
 
-    public void SetPlayerInput(uint id, Vector2 direction)
+    /// <summary>groupId is the session's primary/original entity Id. Every piece the player
+    /// currently owns shares that direction (agar-style: no independent per-cell aim).</summary>
+    public void SetPlayerInput(uint groupId, Vector2 direction)
     {
         lock (_gate)
         {
-            if (_players.TryGetValue(id, out var p))
+            var now = DateTime.UtcNow;
+            foreach (var p in _players.Values)
             {
+                if (p.GroupId != groupId) continue;
                 p.InputDirection = direction;
-                p.LastSeenUtc = DateTime.UtcNow;
+                p.LastSeenUtc = now;
             }
         }
     }
+
+    /// <summary>Splits every eligible cell the group owns at once (agar-style), capped at
+    /// MaxPiecesPerPlayer total. No-op if nothing is big enough or the group is on cooldown.</summary>
+    public void SplitPlayer(uint groupId)
+    {
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            if (_lastSplitUtc.TryGetValue(groupId, out var last) && now - last < Rules.SplitCooldown) return;
+
+            var pieces = _players.Values.Where(p => p.GroupId == groupId).ToList();
+            int pieceCount = pieces.Count;
+            if (pieceCount == 0) return;
+
+            var toSplit = pieces.Where(p => p.Mass >= Rules.SplitMinMass).ToList();
+            if (toSplit.Count == 0) return;
+
+            foreach (var piece in toSplit)
+            {
+                if (pieceCount >= Rules.MaxPiecesPerPlayer) break;
+                SpawnSplitPiece(piece, groupId);
+                pieceCount++;
+            }
+
+            _lastSplitUtc[groupId] = now;
+        }
+    }
+
+    /// <summary>Ejects a small pellet of mass from every cell the group owns, in that cell's
+    /// current move direction. Server-validated: mass floor enforced here, not trusted from client.</summary>
+    public void EjectMass(uint groupId)
+    {
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            if (_lastEjectUtc.TryGetValue(groupId, out var last) && now - last < Rules.EjectCooldown) return;
+
+            bool ejectedAny = false;
+            foreach (var piece in _players.Values.Where(p => p.GroupId == groupId))
+            {
+                if (piece.Mass < Rules.EjectMinMass) continue;
+
+                var dir = piece.InputDirection != Vector2.Zero ? SafeDir(piece.InputDirection) : new Vector2(1f, 0f);
+                piece.Mass = Rules.ClampMass(piece.Mass - Rules.EjectMassAmount);
+
+                var pellet = new FoodItem
+                {
+                    Id = _nextId++,
+                    Position = piece.Position + dir * (piece.Scale / 2f + FoodItem.Radius),
+                    Velocity = dir * Rules.EjectSpeed,
+                };
+                _food[pellet.Id] = pellet;
+                _foodChangedThisTick.Add(pellet);
+                ejectedAny = true;
+            }
+
+            if (ejectedAny) _lastEjectUtc[groupId] = now;
+        }
+    }
+
+    private void SpawnSplitPiece(PlayerEntity piece, uint groupId)
+    {
+        var dir = piece.InputDirection != Vector2.Zero ? SafeDir(piece.InputDirection) : new Vector2(1f, 0f);
+        float newMass = Math.Max(Rules.MassMin, piece.Mass / 2f);
+        piece.Mass = newMass;
+
+        var mergeAt = DateTime.UtcNow.AddSeconds(Rules.MergeCooldownSeconds);
+        var clone = new PlayerEntity
+        {
+            Id = _nextId++,
+            GroupId = groupId,
+            Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+            Mass = newMass,
+            Color = piece.Color,
+            Name = piece.Name,
+            EndPoint = piece.EndPoint,
+            InputDirection = piece.InputDirection,
+            LastSeenUtc = piece.LastSeenUtc,
+            SplitVelocity = dir * Rules.SplitImpulseSpeed,
+            MergeEligibleUtc = mergeAt,
+        };
+        piece.SplitVelocity = dir * Rules.SplitImpulseSpeed;
+        piece.MergeEligibleUtc = mergeAt;
+        _players[clone.Id] = clone;
+    }
+
+    private static Vector2 SafeDir(Vector2 v) => v.LengthSquared() > 0.0001f ? Vector2.Normalize(v) : Vector2.Zero;
 
     /// <summary>Removes players that haven't sent input in a while (they closed the client without a clean disconnect).</summary>
     public List<uint> RemoveStalePlayers(TimeSpan timeout)
@@ -151,8 +274,11 @@ public sealed class GameWorld
             }
             MoveEntity(_bots.Values, dt);
 
+            MoveFood(dt);
+            ResolveVirusCollisions();
             ResolveFoodEating();
             ResolveBlobEating();
+            ResolveMerges();
         }
     }
 
@@ -161,16 +287,131 @@ public sealed class GameWorld
         foreach (var e in entities)
         {
             Vector2 dir = e is PlayerEntity p ? p.InputDirection : e is AiEntity a ? a.MoveDirection : Vector2.Zero;
+            Vector2 vel = Vector2.Zero;
             if (dir != Vector2.Zero)
             {
                 if (dir.LengthSquared() > 1f) dir = Vector2.Normalize(dir);
                 float speed = Rules.MovementSpeedForScale(e.Scale);
-                e.Position += dir * speed * dt;
+                vel = dir * speed;
             }
+
+            if (e.SplitVelocity != Vector2.Zero)
+            {
+                vel += e.SplitVelocity;
+                e.SplitVelocity *= Math.Max(0f, 1f - Rules.SplitVelocityDecayPerSecond * dt);
+                if (e.SplitVelocity.LengthSquared() < 0.25f) e.SplitVelocity = Vector2.Zero;
+            }
+
+            e.Position += vel * dt;
 
             e.Position = new Vector2(
                 Math.Clamp(e.Position.X, -HalfMapSize, HalfMapSize),
                 Math.Clamp(e.Position.Y, -HalfMapSize, HalfMapSize));
+        }
+    }
+
+    private void MoveFood(float dt)
+    {
+        foreach (var food in _food.Values)
+        {
+            if (food.Velocity == Vector2.Zero) continue;
+
+            food.Position += food.Velocity * dt;
+            food.Velocity *= Math.Max(0f, 1f - Rules.EjectVelocityDecayPerSecond * dt);
+            if (food.Velocity.LengthSquared() < 0.5f) food.Velocity = Vector2.Zero;
+
+            food.Position = new Vector2(
+                Math.Clamp(food.Position.X, -HalfMapSize, HalfMapSize),
+                Math.Clamp(food.Position.Y, -HalfMapSize, HalfMapSize));
+
+            _foodChangedThisTick.Add(food);
+        }
+    }
+
+    /// <summary>A cell strictly bigger than the virus that touches it gets forced-split
+    /// (agar-style "pop"); anything at or under virus scale just passes through unaffected.</summary>
+    private void ResolveVirusCollisions()
+    {
+        foreach (var virus in _viruses.Values)
+        {
+            foreach (var piece in _players.Values)
+            {
+                if (piece.Scale <= Rules.VirusScale) continue;
+                float dist = Vector2.Distance(piece.Position, virus.Position);
+                if (dist > (piece.Scale + virus.Scale) / 2f) continue;
+
+                PopVirusOn(piece);
+                virus.Position = RandomPosition();
+                break; // one pop per virus per tick
+            }
+        }
+    }
+
+    private void PopVirusOn(PlayerEntity piece)
+    {
+        int currentPieces = _players.Values.Count(p => p.GroupId == piece.GroupId);
+        int freeSlots = Rules.MaxPiecesPerPlayer - currentPieces;
+        if (freeSlots <= 0) return;
+
+        int piecesToMake = Math.Min(freeSlots, Rules.VirusSplitPieces - 1);
+        if (piecesToMake <= 0) return;
+
+        float eachMass = Math.Max(Rules.MassMin, piece.Mass / (piecesToMake + 1));
+        piece.Mass = eachMass;
+
+        for (int i = 0; i < piecesToMake; i++)
+        {
+            float angle = (float)(i + 1) / (piecesToMake + 1) * MathF.PI * 2f;
+            var dir = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+
+            var mergeAt = DateTime.UtcNow.AddSeconds(Rules.MergeCooldownSeconds);
+            var clone = new PlayerEntity
+            {
+                Id = _nextId++,
+                GroupId = piece.GroupId,
+                Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+                Mass = eachMass,
+                Color = piece.Color,
+                Name = piece.Name,
+                EndPoint = piece.EndPoint,
+                InputDirection = piece.InputDirection,
+                LastSeenUtc = piece.LastSeenUtc,
+                SplitVelocity = dir * Rules.SplitImpulseSpeed,
+                MergeEligibleUtc = mergeAt,
+            };
+            piece.MergeEligibleUtc = mergeAt;
+            _players[clone.Id] = clone;
+        }
+    }
+
+    /// <summary>Split siblings recombine once both sides' MergeEligibleUtc has passed and they're
+    /// touching again - this is what turns "split apart" back into "one blob" over time.</summary>
+    private void ResolveMerges()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var group in _players.Values.GroupBy(p => p.GroupId))
+        {
+            if (group.Count() < 2) continue;
+            var pieces = group.ToList();
+
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                var a = pieces[i];
+                if (!_players.ContainsKey(a.Id)) continue;
+
+                for (int j = i + 1; j < pieces.Count; j++)
+                {
+                    var b = pieces[j];
+                    if (!_players.ContainsKey(b.Id)) continue;
+                    if (now < a.MergeEligibleUtc || now < b.MergeEligibleUtc) continue;
+
+                    float dist = Vector2.Distance(a.Position, b.Position);
+                    if (dist > (a.Scale + b.Scale) / 2f) continue;
+
+                    a.Mass = Rules.ClampMass(a.Mass + b.Mass);
+                    _players.Remove(b.Id);
+                }
+            }
         }
     }
 
@@ -232,6 +473,7 @@ public sealed class GameWorld
             {
                 e.Mass = Rules.ClampMass(e.Mass + Rules.FoodMassGain);
                 eaten.Position = RandomPosition();
+                eaten.Velocity = Vector2.Zero;
                 _foodChangedThisTick.Add(eaten);
             }
         }
@@ -246,6 +488,10 @@ public sealed class GameWorld
             for (int j = i + 1; j < all.Count; j++)
             {
                 var b = all[j];
+
+                // Split siblings never devour each other - ResolveMerges recombines them instead.
+                if (a is PlayerEntity pa && b is PlayerEntity pb && pa.GroupId == pb.GroupId) continue;
+
                 float dist = Vector2.Distance(a.Position, b.Position);
                 if (dist > Math.Max(a.Scale, b.Scale) / 2f) continue;
 
@@ -264,6 +510,16 @@ public sealed class GameWorld
     private void Devour(Entity winner, Entity loser)
     {
         winner.Mass = Rules.ClampMass(winner.Mass + loser.Mass);
+
+        // A losing split piece is just removed if its group still has other pieces alive -
+        // "respawn in place" only makes sense for the group's very last remaining piece (an
+        // actual player death), otherwise the eaten player would get a free new cell for free.
+        if (loser is PlayerEntity lp && _players.Values.Any(p => p.GroupId == lp.GroupId && p.Id != lp.Id))
+        {
+            _players.Remove(lp.Id);
+            return;
+        }
+
         RespawnAsNew(loser);
     }
 
@@ -271,12 +527,18 @@ public sealed class GameWorld
     {
         e.Mass = Rules.MassMin;
         e.Position = RandomPosition();
+        e.SplitVelocity = Vector2.Zero;
         if (e is AiEntity ai)
         {
             ai.State = AiState.Roaming;
             ai.TargetId = null;
             ai.ThreatId = null;
             ai.RoamTarget = RandomPosition();
+        }
+        else if (e is PlayerEntity lp)
+        {
+            lp.GroupId = lp.Id;
+            lp.MergeEligibleUtc = DateTime.MinValue;
         }
     }
 
@@ -291,9 +553,21 @@ public sealed class GameWorld
         get { lock (_gate) { return _players.Values.ToArray(); } }
     }
 
+    /// <summary>Distinct players (grouped by GroupId), not raw cell/piece count - a split player
+    /// must still only count once against room capacity.</summary>
+    public int DistinctPlayerCount
+    {
+        get { lock (_gate) { return _players.Values.Select(p => p.GroupId).Distinct().Count(); } }
+    }
+
     public IReadOnlyCollection<AiEntity> Bots
     {
         get { lock (_gate) { return _bots.Values.ToArray(); } }
+    }
+
+    public IReadOnlyCollection<VirusEntity> Viruses
+    {
+        get { lock (_gate) { return _viruses.Values.ToArray(); } }
     }
 
     public IReadOnlyCollection<FoodItem> AllFood()
@@ -310,14 +584,20 @@ public sealed class GameWorld
         }
     }
 
+    /// <summary>Split pieces are summed under one leaderboard entry per group (agar-style total
+    /// mass), not listed as separate players.</summary>
     public List<(string Name, float Mass)> GetLeaderboard(int top = 5)
     {
         lock (_gate)
         {
-            return AllBlobs()
+            var playerTotals = _players.Values
+                .GroupBy(p => p.GroupId)
+                .Select(g => (Name: g.First().Name, Mass: g.Sum(p => p.Mass)));
+            var botTotals = _bots.Values.Select(b => (b.Name, b.Mass));
+
+            return playerTotals.Concat(botTotals)
                 .OrderByDescending(e => e.Mass)
                 .Take(top)
-                .Select(e => (e.Name, e.Mass))
                 .ToList();
         }
     }
