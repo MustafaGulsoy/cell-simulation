@@ -563,6 +563,11 @@ public sealed class GameWorld
         }
     }
 
+    /// <summary>Matches real agar.io: eat-eligibility is purely mass-based (Rules.CanEat), not
+    /// distance-based. If neither side can ever eat the other at their current masses, they
+    /// physically block each other like solid circles instead of overlapping/passing through
+    /// ("equal-mass collisions don't eat, they just block") - otherwise the existing eat-distance
+    /// gate is unchanged from before.</summary>
     private void ResolveBlobEating()
     {
         var all = AllBlobs().ToList();
@@ -573,22 +578,37 @@ public sealed class GameWorld
             {
                 var b = all[j];
 
-                // Split siblings never devour each other - ResolveMerges recombines them instead.
+                // Split siblings never devour/block each other - ResolveSplitSeparation and
+                // ResolveMerges own that relationship instead.
                 if (a is PlayerEntity pa && b is PlayerEntity pb && pa.GroupId == pb.GroupId) continue;
 
-                float dist = Vector2.Distance(a.Position, b.Position);
-                if (dist > Math.Max(a.Scale, b.Scale) / 2f) continue;
+                bool aEatsB = Rules.CanEat(a.Scale, b.Scale);
+                bool bEatsA = Rules.CanEat(b.Scale, a.Scale);
 
-                if (Rules.CanEat(a.Scale, b.Scale))
+                if (aEatsB || bEatsA)
                 {
-                    Devour(a, b);
+                    float eatDist = Vector2.Distance(a.Position, b.Position);
+                    if (eatDist > Math.Max(a.Scale, b.Scale) / 2f) continue;
+                    if (aEatsB) Devour(a, b); else Devour(b, a);
+                    continue;
                 }
-                else if (Rules.CanEat(b.Scale, a.Scale))
-                {
-                    Devour(b, a);
-                }
+
+                float touchDist = (a.Scale + b.Scale) / 2f;
+                float dist = Vector2.Distance(a.Position, b.Position);
+                if (dist >= touchDist) continue;
+
+                PushApart(a, b, touchDist, dist);
             }
         }
+    }
+
+    private void PushApart(Entity a, Entity b, float targetGap, float dist)
+    {
+        Vector2 delta = a.Position - b.Position;
+        Vector2 dir = dist > 0.0001f ? delta / dist : new Vector2(1f, 0f);
+        float overlap = targetGap - dist;
+        a.Position = ClampToMap(a.Position + dir * (overlap / 2f));
+        b.Position = ClampToMap(b.Position - dir * (overlap / 2f));
     }
 
     private void Devour(Entity winner, Entity loser)

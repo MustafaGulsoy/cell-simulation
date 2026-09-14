@@ -73,7 +73,6 @@ public class PlayerBlob : MonoBehaviour
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
     {
         transform.position = position;
-        blobCircle.ReportState(position, mass, Map.halfMapSize);
 
         if (!colorInitialized || color != currentColor)
         {
