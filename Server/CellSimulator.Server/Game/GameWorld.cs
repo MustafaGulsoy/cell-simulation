@@ -16,6 +16,7 @@ public sealed class GameWorld
     private readonly Dictionary<uint, PlayerEntity> _players = new();
     private readonly Dictionary<uint, AiEntity> _bots = new();
     private readonly Dictionary<uint, VirusEntity> _viruses = new();
+    private readonly Dictionary<uint, SawEntity> _saws = new();
     private readonly Dictionary<uint, FoodItem> _food = new();
     private readonly List<FoodItem> _foodChangedThisTick = new();
 
@@ -29,6 +30,7 @@ public sealed class GameWorld
     public int BotCount { get; }
     public int FoodCount { get; }
     public int VirusCount { get; }
+    public int SawCount { get; }
     public int PlayerCapacity { get; }
 
     public GameWorld(MapSize mapSize)
@@ -39,6 +41,7 @@ public sealed class GameWorld
         BotCount = Math.Max(1, side / 60);
         FoodCount = Math.Max(50, side * 7 - 1000);
         VirusCount = Math.Max(3, side / 150);
+        SawCount = Math.Max(2, side / 200);
         PlayerCapacity = Math.Max(2, side / 20);
     }
 
@@ -61,6 +64,11 @@ public sealed class GameWorld
             {
                 SpawnVirus();
             }
+
+            for (int i = 0; i < SawCount; i++)
+            {
+                SpawnSaw();
+            }
         }
     }
 
@@ -75,6 +83,19 @@ public sealed class GameWorld
             Name = "Virus",
         };
         _viruses[virus.Id] = virus;
+    }
+
+    private void SpawnSaw()
+    {
+        var saw = new SawEntity
+        {
+            Id = _nextId++,
+            Position = RandomPosition(),
+            Mass = Rules.SawMass,
+            Color = Rules.SawColor,
+            Name = "Saw",
+        };
+        _saws[saw.Id] = saw;
     }
 
     private Vector2 RandomPosition()
@@ -274,8 +295,10 @@ public sealed class GameWorld
             }
             MoveEntity(_bots.Values, dt);
 
+            ResolveSplitSeparation();
             MoveFood(dt);
             ResolveVirusCollisions();
+            ResolveSawCollisions();
             ResolveFoodEating();
             ResolveBlobEating();
             ResolveMerges();
@@ -307,6 +330,67 @@ public sealed class GameWorld
             e.Position = new Vector2(
                 Math.Clamp(e.Position.X, -HalfMapSize, HalfMapSize),
                 Math.Clamp(e.Position.Y, -HalfMapSize, HalfMapSize));
+        }
+    }
+
+    /// <summary>Split siblings that aren't merge-eligible yet get pushed apart by direct position
+    /// correction (not velocity) whenever they're closer than their combined radii + padding -
+    /// this is what actually prevents them from sitting fully overlapped once the initial split
+    /// impulse decays, regardless of how the player steers them. Eligible pairs are skipped here
+    /// so ResolveMerges can recombine them instead of fighting this separation.</summary>
+    private void ResolveSplitSeparation()
+    {
+        var now = DateTime.UtcNow;
+        foreach (var group in _players.Values.GroupBy(p => p.GroupId))
+        {
+            var pieces = group.ToList();
+            if (pieces.Count < 2) continue;
+
+            for (int i = 0; i < pieces.Count; i++)
+            {
+                var a = pieces[i];
+                for (int j = i + 1; j < pieces.Count; j++)
+                {
+                    var b = pieces[j];
+                    if (now >= a.MergeEligibleUtc && now >= b.MergeEligibleUtc) continue;
+
+                    float targetGap = (a.Scale + b.Scale) / 2f + Rules.SplitSeparationPadding;
+                    Vector2 delta = a.Position - b.Position;
+                    float dist = delta.Length();
+                    if (dist >= targetGap) continue;
+
+                    Vector2 dir = dist > 0.0001f ? delta / dist : new Vector2(1f, 0f);
+                    float overlap = targetGap - dist;
+                    a.Position = ClampToMap(a.Position + dir * (overlap / 2f));
+                    b.Position = ClampToMap(b.Position - dir * (overlap / 2f));
+                }
+            }
+        }
+    }
+
+    private Vector2 ClampToMap(Vector2 pos) => new(
+        Math.Clamp(pos.X, -HalfMapSize, HalfMapSize),
+        Math.Clamp(pos.Y, -HalfMapSize, HalfMapSize));
+
+    /// <summary>Any blob (player or bot alike) touching a saw takes periodic mass damage, gated
+    /// by a per-entity cooldown so one overlapping tick doesn't chain multiple hits.</summary>
+    private void ResolveSawCollisions()
+    {
+        var now = DateTime.UtcNow;
+        var cooldown = TimeSpan.FromSeconds(Rules.SawDamageCooldownSeconds);
+
+        foreach (var saw in _saws.Values)
+        {
+            foreach (var blob in AllBlobs())
+            {
+                if (now - blob.LastSawHitUtc < cooldown) continue;
+
+                float dist = Vector2.Distance(blob.Position, saw.Position);
+                if (dist > (blob.Scale + saw.Scale) / 2f) continue;
+
+                blob.Mass = Rules.ClampMass(blob.Mass * (1f - Rules.SawDamageFraction));
+                blob.LastSawHitUtc = now;
+            }
         }
     }
 
@@ -568,6 +652,11 @@ public sealed class GameWorld
     public IReadOnlyCollection<VirusEntity> Viruses
     {
         get { lock (_gate) { return _viruses.Values.ToArray(); } }
+    }
+
+    public IReadOnlyCollection<SawEntity> Saws
+    {
+        get { lock (_gate) { return _saws.Values.ToArray(); } }
     }
 
     public IReadOnlyCollection<FoodItem> AllFood()

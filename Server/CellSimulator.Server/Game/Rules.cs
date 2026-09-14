@@ -54,6 +54,22 @@ public static class Rules
     public const int VirusSplitPieces = 8; // total pieces the popped cell becomes (capped by MaxPiecesPerPlayer)
     public static readonly Rgba VirusColor = new() { R = 60, G = 220, B = 90, A = 255 };
 
+    // Split separation: after the initial impulse (SplitImpulseSpeed) decays, siblings that
+    // drifted back together would otherwise sit fully overlapped with nothing to keep them
+    // apart. Every tick, GameWorld.ResolveSplitSeparation pushes any pair closer than this target
+    // gap directly apart by position (not velocity), guaranteeing no interpenetration regardless
+    // of movement/input - this only runs while the pair isn't merge-eligible yet.
+    public const float SplitSeparationPadding = 0.5f;
+
+    // Saw hazard: periodic mass damage to ANY blob touching it (players and bots alike, unlike
+    // the virus which only affects players) - a per-entity cooldown stops one contact tick from
+    // draining multiple hits' worth of mass in a row.
+    public const float SawScale = 14f;
+    public static readonly float SawMass = SawScale * SawScale / ScaleMultiplier;
+    public const float SawDamageFraction = 0.08f;
+    public const float SawDamageCooldownSeconds = 1f;
+    public static readonly Rgba SawColor = new() { R = 40, G = 200, B = 60, A = 255 };
+
     public static float CalculateScale(float mass)
     {
         float c = MathF.Sqrt(mass * ScaleMultiplier);

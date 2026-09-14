@@ -49,7 +49,7 @@ public sealed class GameLoopService : BackgroundService
 
         var changedFood = room.World.DrainChangedFood();
         var leaderboard = room.World.GetLeaderboard();
-        var packet = Protocol.EncodeSnapshot(tick, room.World.Players, room.World.Bots, room.World.Viruses, changedFood, leaderboard);
+        var packet = Protocol.EncodeSnapshot(tick, room.World.Players, room.World.Bots, room.World.Viruses, room.World.Saws, changedFood, leaderboard);
 
         foreach (var endPoint in room.Sessions.Keys)
         {

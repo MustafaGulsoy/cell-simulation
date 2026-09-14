@@ -16,6 +16,7 @@ public class GameClient : MonoBehaviour
     private enum ClientMsg : byte { Join = 1, Input = 2, Split = 3, Eject = 4 }
     private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3 }
     private const byte EntityTypeVirus = 2;
+    private const byte EntityTypeSaw = 3;
 
     public static GameClient instance;
 
@@ -26,6 +27,7 @@ public class GameClient : MonoBehaviour
     [SerializeField] private GameObject aiPrefab;
     [SerializeField] private GameObject foodPrefab;
     [SerializeField] private GameObject virusPrefab;
+    [SerializeField] private GameObject sawPrefab;
 
     private UdpClient socket;
     private Thread receiveThread;
@@ -37,6 +39,7 @@ public class GameClient : MonoBehaviour
     private readonly Dictionary<uint, PlayerBlob> players = new Dictionary<uint, PlayerBlob>();
     private readonly Dictionary<uint, AIBlob> bots = new Dictionary<uint, AIBlob>();
     private readonly Dictionary<uint, VirusBlob> viruses = new Dictionary<uint, VirusBlob>();
+    private readonly Dictionary<uint, SawBlob> saws = new Dictionary<uint, SawBlob>();
     private readonly Dictionary<uint, GameObject> food = new Dictionary<uint, GameObject>();
 
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
@@ -293,6 +296,7 @@ public class GameClient : MonoBehaviour
         var seenPlayers = new HashSet<uint>();
         var seenBots = new HashSet<uint>();
         var seenViruses = new HashSet<uint>();
+        var seenSaws = new HashSet<uint>();
 
         foreach (var e in entities)
         {
@@ -319,6 +323,17 @@ public class GameClient : MonoBehaviour
                 }
                 blob.ApplyState(e.Position, e.Scale, e.Color);
             }
+            else if (e.Type == EntityTypeSaw)
+            {
+                seenSaws.Add(e.Id);
+                if (!saws.TryGetValue(e.Id, out var blob))
+                {
+                    blob = Instantiate(sawPrefab).GetComponent<SawBlob>();
+                    blob.Init(e.Id);
+                    saws[e.Id] = blob;
+                }
+                blob.ApplyState(e.Position, e.Scale, e.Color);
+            }
             else // EntityType.Ai
             {
                 seenBots.Add(e.Id);
@@ -335,6 +350,7 @@ public class GameClient : MonoBehaviour
         RemoveMissing(players, seenPlayers);
         RemoveMissing(bots, seenBots);
         RemoveMissing(viruses, seenViruses);
+        RemoveMissing(saws, seenSaws);
 
         ApplyFoodUpdates(foodUpdates);
 

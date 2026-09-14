@@ -7,6 +7,7 @@ public enum EntityType : byte
     Player = 0,
     Ai = 1,
     Virus = 2,
+    Saw = 3,
 }
 
 public struct Rgba
@@ -37,6 +38,10 @@ public abstract class Entity
     // Decaying outward impulse right after a split/virus-pop; only PlayerEntity ever sets this,
     // but living on the base type keeps GameWorld.MoveEntity<T> generic over players/bots/viruses.
     public Vector2 SplitVelocity;
+
+    // Per-entity saw-damage cooldown gate; only players/bots ever get hit, but lives on the base
+    // type since ResolveSawCollisions iterates AllBlobs() (both) uniformly.
+    public DateTime LastSawHitUtc = DateTime.MinValue;
 
     public float Scale => Rules.CalculateScale(Mass);
 }

@@ -37,6 +37,7 @@ public static class Protocol
         IReadOnlyCollection<PlayerEntity> players,
         IReadOnlyCollection<AiEntity> bots,
         IReadOnlyCollection<VirusEntity> viruses,
+        IReadOnlyCollection<SawEntity> saws,
         IReadOnlyCollection<FoodItem> changedFood,
         List<(string Name, float Mass)> leaderboard)
     {
@@ -52,10 +53,11 @@ public static class Protocol
             w.Write(mass);
         }
 
-        w.Write((ushort)(players.Count + bots.Count + viruses.Count));
+        w.Write((ushort)(players.Count + bots.Count + viruses.Count + saws.Count));
         foreach (var p in players) WriteEntity(w, p.Id, p.Type, p.Position, p.Scale, p.Mass, p.Color, p.Name);
         foreach (var a in bots) WriteEntity(w, a.Id, a.Type, a.Position, a.Scale, a.Mass, a.Color, a.Name);
         foreach (var v in viruses) WriteEntity(w, v.Id, v.Type, v.Position, v.Scale, v.Mass, v.Color, v.Name);
+        foreach (var s in saws) WriteEntity(w, s.Id, s.Type, s.Position, s.Scale, s.Mass, s.Color, s.Name);
 
         w.Write((ushort)changedFood.Count);
         foreach (var f in changedFood)
