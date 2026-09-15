@@ -295,7 +295,7 @@ public sealed class GameWorld
             }
             MoveEntity(_bots.Values, dt);
 
-            ResolveSplitSeparation();
+            ResolveSplitSeparation(dt);
             MoveFood(dt);
             ResolveVirusCollisions();
             ResolveSawCollisions();
@@ -333,12 +333,14 @@ public sealed class GameWorld
         }
     }
 
-    /// <summary>Split siblings that aren't merge-eligible yet get pushed apart by direct position
-    /// correction (not velocity) whenever they're closer than their combined radii + padding -
-    /// this is what actually prevents them from sitting fully overlapped once the initial split
-    /// impulse decays, regardless of how the player steers them. Eligible pairs are skipped here
-    /// so ResolveMerges can recombine them instead of fighting this separation.</summary>
-    private void ResolveSplitSeparation()
+    /// <summary>Split siblings that aren't merge-eligible yet get a spring-like repulsion
+    /// impulse - added to the SAME SplitVelocity that carries the initial split launch, so it
+    /// flows through MoveEntity's normal integration/decay - proportional to how deep they
+    /// overlap. This is what gives "settle apart over time" real momentum/rigidbody feel instead
+    /// of an instant teleport correction: a piece forced back into its sibling visibly resists
+    /// and pushes back rather than snapping to a fixed gap. Eligible pairs are skipped so
+    /// ResolveMerges can recombine them instead of fighting this separation.</summary>
+    private void ResolveSplitSeparation(float dt)
     {
         var now = DateTime.UtcNow;
         foreach (var group in _players.Values.GroupBy(p => p.GroupId))
@@ -361,8 +363,10 @@ public sealed class GameWorld
 
                     Vector2 dir = dist > 0.0001f ? delta / dist : new Vector2(1f, 0f);
                     float overlap = targetGap - dist;
-                    a.Position = ClampToMap(a.Position + dir * (overlap / 2f));
-                    b.Position = ClampToMap(b.Position - dir * (overlap / 2f));
+                    float pushSpeed = Math.Min(Rules.SplitSeparationMaxSpeed, overlap * Rules.SplitSeparationSpring);
+
+                    a.SplitVelocity += dir * pushSpeed * dt;
+                    b.SplitVelocity -= dir * pushSpeed * dt;
                 }
             }
         }
@@ -413,11 +417,15 @@ public sealed class GameWorld
     }
 
     /// <summary>A cell strictly bigger than the virus that touches it gets forced-split
-    /// (agar-style "pop"); anything at or under virus scale just passes through unaffected.</summary>
+    /// (agar-style "pop"); anything at or under virus scale just passes through unaffected. Bots
+    /// are checked too (not just players) - a virus is a hazard for anything big enough, not a
+    /// player-only mechanic.</summary>
     private void ResolveVirusCollisions()
     {
         foreach (var virus in _viruses.Values)
         {
+            bool popped = false;
+
             foreach (var piece in _players.Values)
             {
                 if (piece.Scale <= Rules.VirusScale) continue;
@@ -425,9 +433,58 @@ public sealed class GameWorld
                 if (dist > (piece.Scale + virus.Scale) / 2f) continue;
 
                 PopVirusOn(piece);
-                virus.Position = RandomPosition();
-                break; // one pop per virus per tick
+                popped = true;
+                break; // mutates _players - must stop enumerating it immediately
             }
+
+            if (!popped)
+            {
+                foreach (var bot in _bots.Values)
+                {
+                    if (bot.Scale <= Rules.VirusScale) continue;
+                    float dist = Vector2.Distance(bot.Position, virus.Position);
+                    if (dist > (bot.Scale + virus.Scale) / 2f) continue;
+
+                    PopVirusOnBot(bot);
+                    popped = true;
+                    break; // mutates _bots - must stop enumerating it immediately
+                }
+            }
+
+            if (popped) virus.Position = RandomPosition();
+        }
+    }
+
+    /// <summary>Bots don't have the player group/merge-eligibility system - a popped bot just
+    /// becomes several smaller independent bots (capped so repeated feeding can't runaway-grow
+    /// the bot population), which is enough to make the virus an actual threat to them too.</summary>
+    private void PopVirusOnBot(AiEntity bot)
+    {
+        int botCap = BotCount * 3;
+        if (_bots.Count >= botCap) return;
+
+        int piecesToMake = Math.Min(botCap - _bots.Count, Rules.VirusBotSplitPieces - 1);
+        if (piecesToMake <= 0) return;
+
+        float eachMass = Math.Max(Rules.MassMin, bot.Mass / (piecesToMake + 1));
+        bot.Mass = eachMass;
+
+        for (int i = 0; i < piecesToMake; i++)
+        {
+            float angle = (float)(i + 1) / (piecesToMake + 1) * MathF.PI * 2f;
+            var dir = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+
+            var clone = new AiEntity
+            {
+                Id = _nextId++,
+                Position = bot.Position + dir * (bot.Scale / 2f + 1f),
+                Mass = eachMass,
+                Color = bot.Color,
+                Name = bot.Name,
+                RoamTarget = RandomPosition(),
+                SplitVelocity = dir * Rules.SplitImpulseSpeed,
+            };
+            _bots[clone.Id] = clone;
         }
     }
 

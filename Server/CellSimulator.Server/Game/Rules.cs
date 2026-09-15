@@ -52,14 +52,18 @@ public static class Rules
     public const float VirusScale = 50f;
     public static readonly float VirusMass = VirusScale * VirusScale / ScaleMultiplier;
     public const int VirusSplitPieces = 8; // total pieces the popped cell becomes (capped by MaxPiecesPerPlayer)
+    public const int VirusBotSplitPieces = 4; // bots don't have the player group/merge system, so fewer, simpler pieces
     public static readonly Rgba VirusColor = new() { R = 60, G = 220, B = 90, A = 255 };
 
     // Split separation: after the initial impulse (SplitImpulseSpeed) decays, siblings that
     // drifted back together would otherwise sit fully overlapped with nothing to keep them
-    // apart. Every tick, GameWorld.ResolveSplitSeparation pushes any pair closer than this target
-    // gap directly apart by position (not velocity), guaranteeing no interpenetration regardless
-    // of movement/input - this only runs while the pair isn't merge-eligible yet.
+    // apart. GameWorld.ResolveSplitSeparation adds a spring-like repulsion to SplitVelocity
+    // (proportional to overlap depth, capped) whenever a pair is closer than this target gap -
+    // real momentum/deceleration via the same decay MoveEntity already applies, not an instant
+    // teleport - this only runs while the pair isn't merge-eligible yet.
     public const float SplitSeparationPadding = 0.5f;
+    public const float SplitSeparationSpring = 60f; // accel (units/sec^2) per unit of overlap depth
+    public const float SplitSeparationMaxSpeed = 20f; // cap on the repulsion velocity added per tick
 
     // Saw hazard: periodic mass damage to ANY blob touching it (players and bots alike, unlike
     // the virus which only affects players) - a per-entity cooldown stops one contact tick from
