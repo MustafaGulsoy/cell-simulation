@@ -65,14 +65,25 @@ public static class Rules
     public const float SplitSeparationSpring = 60f; // accel (units/sec^2) per unit of overlap depth
     public const float SplitSeparationMaxSpeed = 20f; // cap on the repulsion velocity added per tick
 
-    // Saw hazard: periodic mass damage to ANY blob touching it (players and bots alike, unlike
-    // the virus which only affects players) - a per-entity cooldown stops one contact tick from
-    // draining multiple hits' worth of mass in a row.
+    // Saw hazard: forces a cell strictly bigger than it to pop into a FEW (2-4) UNEVENLY sized
+    // pieces - unlike the virus's even split, some pieces come out noticeably bigger than others.
+    // Affects players and bots alike (unlike the virus, which only affects players). A per-entity
+    // cooldown stops the freshly-created pieces from immediately re-popping on the same saw.
     public const float SawScale = 14f;
     public static readonly float SawMass = SawScale * SawScale / ScaleMultiplier;
-    public const float SawDamageFraction = 0.08f;
-    public const float SawDamageCooldownSeconds = 1f;
+    public const int SawSplitPiecesMin = 2;
+    public const int SawSplitPiecesMax = 4;
+    public const float SawPopCooldownSeconds = 1f;
     public static readonly Rgba SawColor = new() { R = 40, G = 200, B = 60, A = 255 };
+
+    // Saw feeding: an ejected food pellet that reaches a saw feeds it (consumed, doesn't respawn
+    // as normal food). Every SawFeedThresholdMin..Max feeds (randomized per saw, re-rolled after
+    // each trigger), the saw launches a brand new saw a good distance away in the direction that
+    // feed was thrown from - mirrors agar.io's virus-feeding mechanic.
+    public const int SawFeedThresholdMin = 2;
+    public const int SawFeedThresholdMax = 4;
+    public const float SawFeedLaunchDistance = 55f;
+    public const int SawMaxCountMultiplier = 5; // hard cap: GameWorld.SawCount * this
 
     public static float CalculateScale(float mass)
     {

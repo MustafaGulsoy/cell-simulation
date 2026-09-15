@@ -94,6 +94,21 @@ public sealed class GameWorld
             Mass = Rules.SawMass,
             Color = Rules.SawColor,
             Name = "Saw",
+            FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1),
+        };
+        _saws[saw.Id] = saw;
+    }
+
+    private void SpawnSawAt(Vector2 position)
+    {
+        var saw = new SawEntity
+        {
+            Id = _nextId++,
+            Position = ClampToMap(position),
+            Mass = Rules.SawMass,
+            Color = Rules.SawColor,
+            Name = "Saw",
+            FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1),
         };
         _saws[saw.Id] = saw;
     }
@@ -103,6 +118,12 @@ public sealed class GameWorld
         float x = (float)(_rng.NextDouble() * 2 - 1) * HalfMapSize;
         float y = (float)(_rng.NextDouble() * 2 - 1) * HalfMapSize;
         return new Vector2(x, y);
+    }
+
+    private Vector2 RandomUnitVector()
+    {
+        float angle = (float)(_rng.NextDouble() * Math.PI * 2);
+        return new Vector2(MathF.Cos(angle), MathF.Sin(angle));
     }
 
     private void SpawnBot()
@@ -228,6 +249,7 @@ public sealed class GameWorld
                     Id = _nextId++,
                     Position = piece.Position + dir * (piece.Scale / 2f + FoodItem.Radius),
                     Velocity = dir * Rules.EjectSpeed,
+                    EjectDirection = dir,
                 };
                 _food[pellet.Id] = pellet;
                 _foodChangedThisTick.Add(pellet);
@@ -297,6 +319,7 @@ public sealed class GameWorld
 
             ResolveSplitSeparation(dt);
             MoveFood(dt);
+            ResolveSawFeeding();
             ResolveVirusCollisions();
             ResolveSawCollisions();
             ResolveFoodEating();
@@ -376,25 +399,184 @@ public sealed class GameWorld
         Math.Clamp(pos.X, -HalfMapSize, HalfMapSize),
         Math.Clamp(pos.Y, -HalfMapSize, HalfMapSize));
 
-    /// <summary>Any blob (player or bot alike) touching a saw takes periodic mass damage, gated
-    /// by a per-entity cooldown so one overlapping tick doesn't chain multiple hits.</summary>
+    /// <summary>A cell strictly bigger than a saw that touches it gets forced-split into a few
+    /// unevenly-sized pieces (players and bots alike, unlike the virus which only affects
+    /// players); anything at or under saw scale just passes through unaffected. A per-entity
+    /// cooldown stops the freshly-created pieces from immediately re-popping on the same saw.</summary>
     private void ResolveSawCollisions()
     {
         var now = DateTime.UtcNow;
-        var cooldown = TimeSpan.FromSeconds(Rules.SawDamageCooldownSeconds);
+        var cooldown = TimeSpan.FromSeconds(Rules.SawPopCooldownSeconds);
 
         foreach (var saw in _saws.Values)
         {
-            foreach (var blob in AllBlobs())
+            bool popped = false;
+
+            foreach (var piece in _players.Values)
             {
-                if (now - blob.LastSawHitUtc < cooldown) continue;
+                if (piece.Scale <= Rules.SawScale) continue;
+                if (now - piece.LastSawHitUtc < cooldown) continue;
+                float dist = Vector2.Distance(piece.Position, saw.Position);
+                if (dist > (piece.Scale + saw.Scale) / 2f) continue;
 
-                float dist = Vector2.Distance(blob.Position, saw.Position);
-                if (dist > (blob.Scale + saw.Scale) / 2f) continue;
-
-                blob.Mass = Rules.ClampMass(blob.Mass * (1f - Rules.SawDamageFraction));
-                blob.LastSawHitUtc = now;
+                PopSawOn(piece, now);
+                popped = true;
+                break; // mutates _players - must stop enumerating it immediately
             }
+
+            if (!popped)
+            {
+                foreach (var bot in _bots.Values)
+                {
+                    if (bot.Scale <= Rules.SawScale) continue;
+                    if (now - bot.LastSawHitUtc < cooldown) continue;
+                    float dist = Vector2.Distance(bot.Position, saw.Position);
+                    if (dist > (bot.Scale + saw.Scale) / 2f) continue;
+
+                    PopSawOnBot(bot, now);
+                    break; // mutates _bots - must stop enumerating it immediately
+                }
+            }
+        }
+    }
+
+    /// <summary>Unlike the virus's equal-mass pop, weights are randomized so pieces come out
+    /// noticeably uneven - some big, some small.</summary>
+    private void PopSawOn(PlayerEntity piece, DateTime now)
+    {
+        int currentPieces = _players.Values.Count(p => p.GroupId == piece.GroupId);
+        int freeSlots = Rules.MaxPiecesPerPlayer - currentPieces;
+        if (freeSlots <= 0) return;
+
+        int totalPieces = _rng.Next(Rules.SawSplitPiecesMin, Rules.SawSplitPiecesMax + 1);
+        int piecesToMake = Math.Min(freeSlots, totalPieces - 1);
+        if (piecesToMake <= 0) return;
+
+        var weights = new float[piecesToMake + 1];
+        float weightSum = 0f;
+        for (int i = 0; i < weights.Length; i++)
+        {
+            weights[i] = 0.3f + (float)_rng.NextDouble();
+            weightSum += weights[i];
+        }
+
+        float totalMass = piece.Mass;
+        piece.Mass = Math.Max(Rules.MassMin, totalMass * weights[0] / weightSum);
+        piece.LastSawHitUtc = now;
+
+        var mergeAt = now.AddSeconds(Rules.MergeCooldownSeconds);
+        for (int i = 0; i < piecesToMake; i++)
+        {
+            float angle = (float)(i + 1) / (piecesToMake + 1) * MathF.PI * 2f;
+            var dir = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            float eachMass = Math.Max(Rules.MassMin, totalMass * weights[i + 1] / weightSum);
+
+            var clone = new PlayerEntity
+            {
+                Id = _nextId++,
+                GroupId = piece.GroupId,
+                Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+                Mass = eachMass,
+                Color = piece.Color,
+                Name = piece.Name,
+                EndPoint = piece.EndPoint,
+                InputDirection = piece.InputDirection,
+                LastSeenUtc = piece.LastSeenUtc,
+                SplitVelocity = dir * Rules.SplitImpulseSpeed,
+                MergeEligibleUtc = mergeAt,
+                LastSawHitUtc = now,
+            };
+            _players[clone.Id] = clone;
+        }
+        piece.MergeEligibleUtc = mergeAt;
+    }
+
+    /// <summary>Bots don't have the player group/merge system - a popped bot just becomes several
+    /// smaller, unevenly-sized independent bots, capped like the virus's bot-pop.</summary>
+    private void PopSawOnBot(AiEntity bot, DateTime now)
+    {
+        int botCap = BotCount * 3;
+        if (_bots.Count >= botCap) return;
+
+        int totalPieces = _rng.Next(Rules.SawSplitPiecesMin, Rules.SawSplitPiecesMax + 1);
+        int piecesToMake = Math.Min(botCap - _bots.Count, totalPieces - 1);
+        if (piecesToMake <= 0) return;
+
+        var weights = new float[piecesToMake + 1];
+        float weightSum = 0f;
+        for (int i = 0; i < weights.Length; i++)
+        {
+            weights[i] = 0.3f + (float)_rng.NextDouble();
+            weightSum += weights[i];
+        }
+
+        float totalMass = bot.Mass;
+        bot.Mass = Math.Max(Rules.MassMin, totalMass * weights[0] / weightSum);
+        bot.LastSawHitUtc = now;
+        uint batchId = bot.PopBatchId != 0 ? bot.PopBatchId : _nextId++;
+        bot.PopBatchId = batchId;
+
+        for (int i = 0; i < piecesToMake; i++)
+        {
+            float angle = (float)(i + 1) / (piecesToMake + 1) * MathF.PI * 2f;
+            var dir = new Vector2(MathF.Cos(angle), MathF.Sin(angle));
+            float eachMass = Math.Max(Rules.MassMin, totalMass * weights[i + 1] / weightSum);
+
+            var clone = new AiEntity
+            {
+                Id = _nextId++,
+                PopBatchId = batchId,
+                Position = bot.Position + dir * (bot.Scale / 2f + 1f),
+                Mass = eachMass,
+                Color = bot.Color,
+                Name = bot.Name,
+                RoamTarget = RandomPosition(),
+                SplitVelocity = dir * Rules.SplitImpulseSpeed,
+                LastSawHitUtc = now,
+            };
+            _bots[clone.Id] = clone;
+        }
+    }
+
+    /// <summary>An ejected pellet (EjectDirection != zero) that reaches a saw feeds it instead of
+    /// respawning as ordinary food. Every FeedThreshold feeds (randomized 2-4, re-rolled after
+    /// each trigger), the saw launches a brand new saw a good distance away in the direction that
+    /// feed was thrown from - mirrors agar.io's virus-feeding mechanic. Capped so repeated feeding
+    /// can't grow the saw population without bound.</summary>
+    private void ResolveSawFeeding()
+    {
+        // Snapshot first: SpawnSawAt below adds to _saws mid-loop, which would otherwise
+        // invalidate this enumerator (unlike the pop methods, we don't break - every saw should
+        // still get a chance to feed in the same tick).
+        foreach (var saw in _saws.Values.ToList())
+        {
+            FoodItem? fed = null;
+            foreach (var food in _food.Values)
+            {
+                if (food.EjectDirection == Vector2.Zero) continue;
+                float dist = Vector2.Distance(food.Position, saw.Position);
+                if (dist > saw.Scale / 2f + FoodItem.Radius) continue;
+                fed = food;
+                break;
+            }
+
+            if (fed == null) continue;
+
+            Vector2 launchDir = fed.EjectDirection;
+            fed.Position = RandomPosition();
+            fed.Velocity = Vector2.Zero;
+            fed.EjectDirection = Vector2.Zero;
+            _foodChangedThisTick.Add(fed);
+
+            saw.FeedCount++;
+            if (saw.FeedCount < saw.FeedThreshold) continue;
+
+            saw.FeedCount = 0;
+            saw.FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1);
+
+            if (_saws.Count >= SawCount * Rules.SawMaxCountMultiplier) continue;
+            var dir = launchDir.LengthSquared() > 0.0001f ? Vector2.Normalize(launchDir) : RandomUnitVector();
+            SpawnSawAt(saw.Position + dir * Rules.SawFeedLaunchDistance);
         }
     }
 
@@ -468,6 +650,8 @@ public sealed class GameWorld
 
         float eachMass = Math.Max(Rules.MassMin, bot.Mass / (piecesToMake + 1));
         bot.Mass = eachMass;
+        uint batchId = bot.PopBatchId != 0 ? bot.PopBatchId : _nextId++;
+        bot.PopBatchId = batchId;
 
         for (int i = 0; i < piecesToMake; i++)
         {
@@ -477,6 +661,7 @@ public sealed class GameWorld
             var clone = new AiEntity
             {
                 Id = _nextId++,
+                PopBatchId = batchId,
                 Position = bot.Position + dir * (bot.Scale / 2f + 1f),
                 Mass = eachMass,
                 Color = bot.Color,
@@ -615,6 +800,7 @@ public sealed class GameWorld
                 e.Mass = Rules.ClampMass(e.Mass + Rules.FoodMassGain);
                 eaten.Position = RandomPosition();
                 eaten.Velocity = Vector2.Zero;
+                eaten.EjectDirection = Vector2.Zero;
                 _foodChangedThisTick.Add(eaten);
             }
         }
@@ -638,6 +824,11 @@ public sealed class GameWorld
                 // Split siblings never devour/block each other - ResolveSplitSeparation and
                 // ResolveMerges own that relationship instead.
                 if (a is PlayerEntity pa && b is PlayerEntity pb && pa.GroupId == pb.GroupId) continue;
+
+                // Virus/saw-pop bot siblings likewise shouldn't immediately cannibalize each
+                // other - bots have no merge system to recombine them, so this immunity is
+                // permanent for that batch rather than time-limited.
+                if (a is AiEntity aa && b is AiEntity ab && aa.PopBatchId != 0 && aa.PopBatchId == ab.PopBatchId) continue;
 
                 bool aEatsB = Rules.CanEat(a.Scale, b.Scale);
                 bool bEatsA = Rules.CanEat(b.Scale, a.Scale);
