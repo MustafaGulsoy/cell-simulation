@@ -35,9 +35,18 @@ public abstract class Entity
     public Rgba Color;
     public string Name = "";
 
-    // Decaying outward impulse right after a split/virus-pop; only PlayerEntity ever sets this,
-    // but living on the base type keeps GameWorld.MoveEntity<T> generic over players/bots/viruses.
+    // Decaying outward impulse used by GameWorld.ResolveSplitSeparation's ongoing "keep siblings
+    // apart" spring (NOT the initial split launch - that's the Launch* fields below). Only
+    // PlayerEntity ever sets this, but living on the base type keeps MoveEntity<T> generic.
     public Vector2 SplitVelocity;
+
+    // The initial "just been split/popped" launch: a size-proportional lerp from LaunchStart to
+    // LaunchTarget eased fast-then-slow (GameWorld.StartLaunch/MoveEntity), not a physics
+    // simulation - while IsLaunching is true this fully overrides normal movement for the entity.
+    public Vector2 LaunchStart;
+    public Vector2 LaunchTarget;
+    public float LaunchElapsed;
+    public bool IsLaunching;
 
     // Per-entity saw-pop cooldown gate; only players/bots ever get hit, but lives on the base
     // type since ResolveSawCollisions iterates AllBlobs() (both) uniformly.

@@ -23,6 +23,12 @@ public sealed class GameWorld
     private readonly Dictionary<uint, DateTime> _lastSplitUtc = new();
     private readonly Dictionary<uint, DateTime> _lastEjectUtc = new();
 
+    // Per-group "cursor" point that the joystick moves - every piece the player owns steers
+    // toward this shared point instead of moving in lockstep parallel to the raw input direction,
+    // so pieces actively gather back together (agar.io-style: you move a point, cells chase it)
+    // rather than just drifting in formation forever.
+    private readonly Dictionary<uint, Vector2> _groupTargets = new();
+
     private uint _nextId = 1;
 
     public MapSize Size { get; }
@@ -155,6 +161,7 @@ public sealed class GameWorld
             };
             player.GroupId = player.Id;
             _players[player.Id] = player;
+            _groupTargets[player.GroupId] = player.Position;
             return player;
         }
     }
@@ -169,6 +176,7 @@ public sealed class GameWorld
             foreach (var pid in toRemove) _players.Remove(pid);
             _lastSplitUtc.Remove(id);
             _lastEjectUtc.Remove(id);
+            _groupTargets.Remove(id);
         }
     }
 
@@ -271,18 +279,18 @@ public sealed class GameWorld
         {
             Id = _nextId++,
             GroupId = groupId,
-            Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+            Position = piece.Position,
             Mass = newMass,
             Color = piece.Color,
             Name = piece.Name,
             EndPoint = piece.EndPoint,
             InputDirection = piece.InputDirection,
             LastSeenUtc = piece.LastSeenUtc,
-            SplitVelocity = dir * Rules.SplitImpulseSpeed,
             MergeEligibleUtc = mergeAt,
         };
-        piece.SplitVelocity = dir * Rules.SplitImpulseSpeed;
         piece.MergeEligibleUtc = mergeAt;
+        StartLaunch(piece, dir);
+        StartLaunch(clone, dir);
         _players[clone.Id] = clone;
     }
 
@@ -310,6 +318,7 @@ public sealed class GameWorld
         {
             _foodChangedThisTick.Clear();
 
+            AdvanceGroupTargets(dt);
             MoveEntity(_players.Values, dt);
             foreach (var bot in _bots.Values)
             {
@@ -328,11 +337,66 @@ public sealed class GameWorld
         }
     }
 
+    /// <summary>Moves each group's shared "cursor" point by its current input direction (any
+    /// piece's InputDirection - they're all kept in sync by SetPlayerInput). Pieces steer toward
+    /// this point in MoveEntity rather than moving directly along the raw input direction.</summary>
+    private void AdvanceGroupTargets(float dt)
+    {
+        foreach (var group in _players.Values.GroupBy(p => p.GroupId))
+        {
+            var rep = group.First();
+            if (!_groupTargets.TryGetValue(rep.GroupId, out var target)) target = rep.Position;
+
+            if (rep.InputDirection != Vector2.Zero)
+            {
+                var dir = rep.InputDirection.LengthSquared() > 1f ? Vector2.Normalize(rep.InputDirection) : rep.InputDirection;
+                target = ClampToMap(target + dir * Rules.MovementSpeedMax * dt);
+            }
+
+            _groupTargets[rep.GroupId] = target;
+        }
+    }
+
+    /// <summary>Starts the initial "just been split/popped" lerp launch for one entity - see
+    /// Entity.IsLaunching. Distance (and so effective speed, since duration is fixed) scales with
+    /// the entity's own current size.</summary>
+    private void StartLaunch(Entity e, Vector2 dir)
+    {
+        float distance = Rules.SplitLaunchBaseDistance + e.Scale * Rules.SplitLaunchDistancePerScale;
+        e.LaunchStart = e.Position;
+        e.LaunchTarget = ClampToMap(e.Position + dir * distance);
+        e.LaunchElapsed = 0f;
+        e.IsLaunching = true;
+    }
+
     private void MoveEntity<T>(IEnumerable<T> entities, float dt) where T : Entity
     {
         foreach (var e in entities)
         {
-            Vector2 dir = e is PlayerEntity p ? p.InputDirection : e is AiEntity a ? a.MoveDirection : Vector2.Zero;
+            if (e.IsLaunching)
+            {
+                e.LaunchElapsed += dt;
+                float t = Math.Clamp(e.LaunchElapsed / Rules.SplitLaunchDuration, 0f, 1f);
+                e.Position = Vector2.Lerp(e.LaunchStart, e.LaunchTarget, Rules.SplitLaunchEase(t));
+                if (t >= 1f) e.IsLaunching = false;
+                continue; // the launch fully drives position this tick - no normal movement too
+            }
+
+            Vector2 dir;
+            if (e is PlayerEntity p)
+            {
+                var target = _groupTargets.TryGetValue(p.GroupId, out var t2) ? t2 : p.Position;
+                dir = SafeDir(target - p.Position);
+            }
+            else if (e is AiEntity a)
+            {
+                dir = a.MoveDirection;
+            }
+            else
+            {
+                dir = Vector2.Zero;
+            }
+
             Vector2 vel = Vector2.Zero;
             if (dir != Vector2.Zero)
             {
@@ -356,16 +420,19 @@ public sealed class GameWorld
         }
     }
 
-    /// <summary>Split siblings that aren't merge-eligible yet get a spring-like repulsion
-    /// impulse - added to the SAME SplitVelocity that carries the initial split launch, so it
-    /// flows through MoveEntity's normal integration/decay - proportional to how deep they
-    /// overlap. This is what gives "settle apart over time" real momentum/rigidbody feel instead
-    /// of an instant teleport correction: a piece forced back into its sibling visibly resists
-    /// and pushes back rather than snapping to a fixed gap. Eligible pairs are skipped so
-    /// ResolveMerges can recombine them instead of fighting this separation.</summary>
+    /// <summary>Split siblings that aren't merge-eligible yet get pushed apart by a fractional
+    /// position correction every tick, proportional to how deep they overlap - this runs
+    /// unconditionally AFTER movement, so unlike a velocity-based spring it can never be outraced
+    /// by a piece's own movement speed (e.g. both pieces steering toward the same group target
+    /// point at full speed would otherwise overpower a capped repulsion velocity and the pair
+    /// would never actually separate). Correcting only a fraction each tick (not the full overlap
+    /// at once) still gives a smooth, gradual "settle apart" feel rather than an instant snap.
+    /// Eligible pairs are skipped so ResolveMerges can recombine them instead of fighting this.</summary>
     private void ResolveSplitSeparation(float dt)
     {
         var now = DateTime.UtcNow;
+        float correctionFraction = Math.Clamp(dt * Rules.SplitSeparationCorrectionRate, 0f, 1f);
+
         foreach (var group in _players.Values.GroupBy(p => p.GroupId))
         {
             var pieces = group.ToList();
@@ -374,9 +441,11 @@ public sealed class GameWorld
             for (int i = 0; i < pieces.Count; i++)
             {
                 var a = pieces[i];
+                if (a.IsLaunching) continue; // the launch lerp is already authoritative this tick
                 for (int j = i + 1; j < pieces.Count; j++)
                 {
                     var b = pieces[j];
+                    if (b.IsLaunching) continue;
                     if (now >= a.MergeEligibleUtc && now >= b.MergeEligibleUtc) continue;
 
                     float targetGap = (a.Scale + b.Scale) / 2f + Rules.SplitSeparationPadding;
@@ -386,10 +455,10 @@ public sealed class GameWorld
 
                     Vector2 dir = dist > 0.0001f ? delta / dist : new Vector2(1f, 0f);
                     float overlap = targetGap - dist;
-                    float pushSpeed = Math.Min(Rules.SplitSeparationMaxSpeed, overlap * Rules.SplitSeparationSpring);
+                    Vector2 correction = dir * overlap * correctionFraction;
 
-                    a.SplitVelocity += dir * pushSpeed * dt;
-                    b.SplitVelocity -= dir * pushSpeed * dt;
+                    a.Position = ClampToMap(a.Position + correction / 2f);
+                    b.Position = ClampToMap(b.Position - correction / 2f);
                 }
             }
         }
@@ -475,17 +544,17 @@ public sealed class GameWorld
             {
                 Id = _nextId++,
                 GroupId = piece.GroupId,
-                Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+                Position = piece.Position,
                 Mass = eachMass,
                 Color = piece.Color,
                 Name = piece.Name,
                 EndPoint = piece.EndPoint,
                 InputDirection = piece.InputDirection,
                 LastSeenUtc = piece.LastSeenUtc,
-                SplitVelocity = dir * Rules.SplitImpulseSpeed,
                 MergeEligibleUtc = mergeAt,
                 LastSawHitUtc = now,
             };
+            StartLaunch(clone, dir);
             _players[clone.Id] = clone;
         }
         piece.MergeEligibleUtc = mergeAt;
@@ -526,14 +595,14 @@ public sealed class GameWorld
             {
                 Id = _nextId++,
                 PopBatchId = batchId,
-                Position = bot.Position + dir * (bot.Scale / 2f + 1f),
+                Position = bot.Position,
                 Mass = eachMass,
                 Color = bot.Color,
                 Name = bot.Name,
                 RoamTarget = RandomPosition(),
-                SplitVelocity = dir * Rules.SplitImpulseSpeed,
                 LastSawHitUtc = now,
             };
+            StartLaunch(clone, dir);
             _bots[clone.Id] = clone;
         }
     }
@@ -662,13 +731,13 @@ public sealed class GameWorld
             {
                 Id = _nextId++,
                 PopBatchId = batchId,
-                Position = bot.Position + dir * (bot.Scale / 2f + 1f),
+                Position = bot.Position,
                 Mass = eachMass,
                 Color = bot.Color,
                 Name = bot.Name,
                 RoamTarget = RandomPosition(),
-                SplitVelocity = dir * Rules.SplitImpulseSpeed,
             };
+            StartLaunch(clone, dir);
             _bots[clone.Id] = clone;
         }
     }
@@ -695,17 +764,17 @@ public sealed class GameWorld
             {
                 Id = _nextId++,
                 GroupId = piece.GroupId,
-                Position = piece.Position + dir * (piece.Scale / 2f + 1f),
+                Position = piece.Position,
                 Mass = eachMass,
                 Color = piece.Color,
                 Name = piece.Name,
                 EndPoint = piece.EndPoint,
                 InputDirection = piece.InputDirection,
                 LastSeenUtc = piece.LastSeenUtc,
-                SplitVelocity = dir * Rules.SplitImpulseSpeed,
                 MergeEligibleUtc = mergeAt,
             };
             piece.MergeEligibleUtc = mergeAt;
+            StartLaunch(clone, dir);
             _players[clone.Id] = clone;
         }
     }
@@ -891,6 +960,7 @@ public sealed class GameWorld
         {
             lp.GroupId = lp.Id;
             lp.MergeEligibleUtc = DateTime.MinValue;
+            _groupTargets[lp.GroupId] = lp.Position;
         }
     }
 

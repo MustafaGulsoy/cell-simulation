@@ -35,12 +35,21 @@ public static class Rules
     // Split: press-to-split doubles cell count (every eligible cell splits at once, agar-style).
     public const float SplitMinMass = 32f;
     public const int MaxPiecesPerPlayer = 16;
-    public const float SplitImpulseSpeed = 30f;
     public const float SplitVelocityDecayPerSecond = 3f;
     public const float MergeCooldownSeconds = 15f;
     private static readonly TimeSpan SplitEjectCooldown = TimeSpan.FromMilliseconds(200);
     public static TimeSpan SplitCooldown => SplitEjectCooldown;
     public static TimeSpan EjectCooldown => SplitEjectCooldown;
+
+    // Split/pop launch animation: a lerp from start to a size-proportional target (bigger cell ->
+    // farther AND faster, since distance/duration = speed and duration is fixed), eased so ~90%
+    // of the distance covers quickly and the last stretch creeps in - like it caught on something
+    // and is pulling itself the rest of the way. GameWorld.StartLaunch/MoveEntity.
+    public const float SplitLaunchBaseDistance = 3f;
+    public const float SplitLaunchDistancePerScale = 1.2f;
+    public const float SplitLaunchDuration = 0.45f;
+
+    public static float SplitLaunchEase(float t) => 1f - MathF.Pow(1f - t, 4f);
 
     // Eject mass (W-key food throw).
     public const float EjectMinMass = 40f;
@@ -55,15 +64,15 @@ public static class Rules
     public const int VirusBotSplitPieces = 4; // bots don't have the player group/merge system, so fewer, simpler pieces
     public static readonly Rgba VirusColor = new() { R = 60, G = 220, B = 90, A = 255 };
 
-    // Split separation: after the initial impulse (SplitImpulseSpeed) decays, siblings that
-    // drifted back together would otherwise sit fully overlapped with nothing to keep them
-    // apart. GameWorld.ResolveSplitSeparation adds a spring-like repulsion to SplitVelocity
-    // (proportional to overlap depth, capped) whenever a pair is closer than this target gap -
-    // real momentum/deceleration via the same decay MoveEntity already applies, not an instant
-    // teleport - this only runs while the pair isn't merge-eligible yet.
+    // Split separation: after the initial launch (see SplitLaunch* below) settles, siblings that
+    // drifted back together (e.g. both steering toward the same group target point) would
+    // otherwise sit fully overlapped with nothing to keep them apart. GameWorld.ResolveSplitSeparation
+    // corrects a FRACTION of the overlap by direct position each tick whenever a pair is closer
+    // than this target gap - unconditional and after movement, so it can't be outraced by a
+    // piece's own movement speed the way a velocity-based repulsion could - this only runs while
+    // the pair isn't merge-eligible yet.
     public const float SplitSeparationPadding = 0.5f;
-    public const float SplitSeparationSpring = 60f; // accel (units/sec^2) per unit of overlap depth
-    public const float SplitSeparationMaxSpeed = 20f; // cap on the repulsion velocity added per tick
+    public const float SplitSeparationCorrectionRate = 10f; // fraction-of-overlap corrected per second
 
     // Saw hazard: forces a cell strictly bigger than it to pop into a FEW (2-4) UNEVENLY sized
     // pieces - unlike the virus's even split, some pieces come out noticeably bigger than others.
