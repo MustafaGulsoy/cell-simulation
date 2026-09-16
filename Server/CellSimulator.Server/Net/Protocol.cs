@@ -10,6 +10,7 @@ public enum ClientMsg : byte
     Input = 2,
     Split = 3,
     Eject = 4,
+    Emoji = 5,
 }
 
 public enum ServerMsg : byte
@@ -17,6 +18,7 @@ public enum ServerMsg : byte
     Welcome = 1,
     Snapshot = 2,
     FoodFull = 3,
+    EmojiEvent = 4,
 }
 
 /// <summary>Tiny binary protocol - no NGO, no reflection, just BinaryReader/Writer over UDP payloads.</summary>
@@ -88,6 +90,18 @@ public static class Protocol
         return ms.ToArray();
     }
 
+    /// <summary>Relayed immediately by UdpServerService when it gets a ClientMsg.Emoji, outside the
+    /// tick loop entirely - never batched into Snapshot, so it costs nothing on the hot path.</summary>
+    public static byte[] EncodeEmojiEvent(uint entityId, byte emojiId)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write((byte)ServerMsg.EmojiEvent);
+        w.Write(entityId);
+        w.Write(emojiId);
+        return ms.ToArray();
+    }
+
     private static void WriteEntity(BinaryWriter w, uint id, EntityType type, Vector2 pos, float scale, float mass, Rgba color, string name)
     {
         w.Write(id);
@@ -116,11 +130,13 @@ public static class Protocol
 
     public readonly record struct JoinMsg(string Username, MapSize MapSize);
     public readonly record struct InputMsg(Vector2 Direction);
+    public readonly record struct EmojiMsg(byte EmojiId);
 
-    public static bool TryDecodeClientMsg(byte[] data, out ClientMsg type, out JoinMsg join, out InputMsg input)
+    public static bool TryDecodeClientMsg(byte[] data, out ClientMsg type, out JoinMsg join, out InputMsg input, out EmojiMsg emoji)
     {
         join = default;
         input = default;
+        emoji = default;
         type = default;
         if (data.Length < 1) return false;
 
@@ -142,6 +158,9 @@ public static class Protocol
                     return true;
                 case ClientMsg.Split:
                 case ClientMsg.Eject:
+                    return true;
+                case ClientMsg.Emoji:
+                    emoji = new EmojiMsg(r.ReadByte());
                     return true;
                 default:
                     return false;

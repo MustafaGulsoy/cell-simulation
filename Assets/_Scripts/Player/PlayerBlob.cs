@@ -1,7 +1,9 @@
+using System.Collections;
 using UnityEngine;
 using Unity.Cinemachine;
 using UnityEngine.Rendering;
 using UnityEngine.UI;
+using TMPro;
 
 // Thin visual proxy - all simulation (movement, growth, eating, AI) now lives on the .NET
 // server (Server/CellSimulator.Server). GameClient.cs drives Init()/ApplyState() from
@@ -32,6 +34,10 @@ public class PlayerBlob : MonoBehaviour
     // is harmless.
     [SerializeField] private Button splitButton;
     [SerializeField] private Button ejectButton;
+
+    [SerializeField] private TextMeshProUGUI emojiBubble;
+    private const float EMOJI_BUBBLE_DURATION = 1.5f;
+    private Coroutine emojiHideCoroutine;
 
     public Color currentColor;
     private bool colorInitialized;
@@ -127,5 +133,39 @@ public class PlayerBlob : MonoBehaviour
         float m = Mathf.Sqrt(scale + 26);
         float calc = (m * m) / 1.4f;
         nextOrthographicSize = Mathf.Clamp(calc, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
+    }
+
+    /// <summary>Called by GameClient when it relays a ServerMsg.EmojiEvent for this entity - shows a
+    /// small bubble above the blob for a couple seconds, then hides itself again.</summary>
+    public void ShowEmoji(byte emojiId)
+    {
+        if (emojiBubble == null)
+        {
+            return;
+        }
+
+        emojiBubble.SetText(EmojiGlyph(emojiId));
+        emojiBubble.gameObject.SetActive(true);
+
+        if (emojiHideCoroutine != null) StopCoroutine(emojiHideCoroutine);
+        emojiHideCoroutine = StartCoroutine(HideEmojiAfterDelay());
+    }
+
+    private IEnumerator HideEmojiAfterDelay()
+    {
+        yield return new WaitForSeconds(EMOJI_BUBBLE_DURATION);
+        emojiBubble.gameObject.SetActive(false);
+        emojiHideCoroutine = null;
+    }
+
+    private static string EmojiGlyph(byte emojiId)
+    {
+        switch (emojiId)
+        {
+            case 1: return ":)";
+            case 2: return "haha";
+            case 3: return ">:(";
+            default: return "?";
+        }
     }
 }

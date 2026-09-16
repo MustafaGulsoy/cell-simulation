@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using TMPro;
@@ -9,6 +10,21 @@ using UnityEngine.SceneManagement;
 public class PlayerHUD : MonoBehaviour
 {
     [SerializeField] private Button mainMenuButton;
+
+    [SerializeField] private GameObject matchSummaryPanel;
+    [SerializeField] private TextMeshProUGUI matchSummaryMassText;
+    [SerializeField] private TextMeshProUGUI matchSummaryTimeText;
+    [SerializeField] private TextMeshProUGUI matchSummaryRecordText;
+    [SerializeField] private TextMeshProUGUI matchSummaryAchievementText;
+    [SerializeField] private Button matchSummaryDismissButton;
+    private const float MATCH_SUMMARY_DURATION = 4f;
+    private Coroutine matchSummaryHideCoroutine;
+
+    [SerializeField] private TextMeshProUGUI dailyPanelText;
+
+    [SerializeField] private Button emojiButton1;
+    [SerializeField] private Button emojiButton2;
+    [SerializeField] private Button emojiButton3;
 
     [SerializeField] public TextMeshProUGUI leaderboardFirst;
     [SerializeField] public TextMeshProUGUI leaderboardSecond;
@@ -41,6 +57,13 @@ public class PlayerHUD : MonoBehaviour
 
         setIdleCanvasActivity(true);
         setPlayingCanvasActivity(false);
+
+        if (matchSummaryDismissButton != null) matchSummaryDismissButton.onClick.AddListener(HideMatchSummary);
+        if (matchSummaryPanel != null) matchSummaryPanel.SetActive(false);
+
+        if (emojiButton1 != null) emojiButton1.onClick.AddListener(() => GameClient.instance?.SendEmoji(1));
+        if (emojiButton2 != null) emojiButton2.onClick.AddListener(() => GameClient.instance?.SendEmoji(2));
+        if (emojiButton3 != null) emojiButton3.onClick.AddListener(() => GameClient.instance?.SendEmoji(3));
     }
 
     public void setIdleCanvasActivity(bool active)
@@ -112,5 +135,59 @@ public class PlayerHUD : MonoBehaviour
         {
             joystickHandle.color = Utils.darkJoystickHandleColor;
         }
+    }
+
+    // There's no real spectator mode (the server respawns the same entity instantly, see
+    // GameClient's death heuristic) - this is just a ~4s non-blocking recap of the life that just
+    // ended, dismissible early by tapping it. The game keeps running underneath the whole time.
+    public void ShowMatchSummary(float massReached, float survivedSeconds, bool isNewRecord, List<string> newlyUnlockedAchievements)
+    {
+        if (matchSummaryPanel == null)
+        {
+            return;
+        }
+
+        matchSummaryMassText.SetText(string.Format("Mass reached: {0}", massReached.ToString("0")));
+        matchSummaryTimeText.SetText(string.Format("Survived: {0}", FormatTime(survivedSeconds)));
+        matchSummaryRecordText.gameObject.SetActive(isNewRecord);
+
+        bool hasNewAchievements = newlyUnlockedAchievements != null && newlyUnlockedAchievements.Count > 0;
+        if (hasNewAchievements)
+        {
+            matchSummaryAchievementText.SetText("Achievement unlocked: " + string.Join(", ", newlyUnlockedAchievements));
+        }
+        matchSummaryAchievementText.gameObject.SetActive(hasNewAchievements);
+
+        matchSummaryPanel.SetActive(true);
+
+        if (matchSummaryHideCoroutine != null) StopCoroutine(matchSummaryHideCoroutine);
+        matchSummaryHideCoroutine = StartCoroutine(HideMatchSummaryAfterDelay());
+    }
+
+    private IEnumerator HideMatchSummaryAfterDelay()
+    {
+        yield return new WaitForSeconds(MATCH_SUMMARY_DURATION);
+        HideMatchSummary();
+    }
+
+    private void HideMatchSummary()
+    {
+        if (matchSummaryHideCoroutine != null)
+        {
+            StopCoroutine(matchSummaryHideCoroutine);
+            matchSummaryHideCoroutine = null;
+        }
+        if (matchSummaryPanel != null) matchSummaryPanel.SetActive(false);
+    }
+
+    private static string FormatTime(float seconds)
+    {
+        int total = Mathf.Max(0, Mathf.RoundToInt(seconds));
+        return string.Format("{0:00}:{1:00}", total / 60, total % 60);
+    }
+
+    public void SetDailyPanelText(string text)
+    {
+        if (dailyPanelText != null) dailyPanelText.SetText(text);
     }
 }

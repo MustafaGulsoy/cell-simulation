@@ -49,7 +49,7 @@ public sealed class UdpServerService : BackgroundService
 
     private void HandlePacket(byte[] data, IPEndPoint from)
     {
-        if (!Protocol.TryDecodeClientMsg(data, out var type, out var join, out var input)) return;
+        if (!Protocol.TryDecodeClientMsg(data, out var type, out var join, out var input, out var emoji)) return;
 
         switch (type)
         {
@@ -89,6 +89,19 @@ public sealed class UdpServerService : BackgroundService
                 if (_rooms.TryGetRoom(from, out var ejectRoom) && ejectRoom.Sessions.TryGetValue(from, out var ejectId))
                 {
                     ejectRoom.World.EjectMass(ejectId);
+                }
+                break;
+
+            case ClientMsg.Emoji:
+                // Relayed straight to the room's sessions, right here off the tick loop - no kill
+                // log, no per-tick batching, just a fire-and-forget broadcast like Welcome/FoodFull.
+                if (_rooms.TryGetRoom(from, out var emojiRoom) && emojiRoom.Sessions.TryGetValue(from, out var emojiEntityId))
+                {
+                    var packet = Protocol.EncodeEmojiEvent(emojiEntityId, emoji.EmojiId);
+                    foreach (var endPoint in emojiRoom.Sessions.Keys)
+                    {
+                        try { Socket.Send(packet, packet.Length, endPoint); } catch (SocketException) { }
+                    }
                 }
                 break;
         }

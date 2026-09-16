@@ -803,8 +803,26 @@ public sealed class GameWorld
                     float dist = Vector2.Distance(a.Position, b.Position);
                     if (dist > (a.Scale + b.Scale) / 2f) continue;
 
-                    a.Mass = Rules.ClampMass(a.Mass + b.Mass);
-                    _players.Remove(b.Id);
+                    // The group's primary piece (Id == GroupId) is the one the client's session
+                    // tracks as "myEntityId" - it must survive any merge it's part of, or the
+                    // client silently loses control forever (no protocol message exists to tell
+                    // it its id changed). Which of a/b is primary can't depend on which index
+                    // happened to land first in this tick's pieces list. Ties (neither piece is
+                    // primary, i.e. both are split clones) fall back to the lower Id so the
+                    // outcome is deterministic instead of depending on Dictionary enumeration
+                    // order.
+                    bool aPrimary = a.Id == a.GroupId;
+                    bool bPrimary = b.Id == b.GroupId;
+                    PlayerEntity survivor, absorbed;
+                    if (aPrimary) { survivor = a; absorbed = b; }
+                    else if (bPrimary) { survivor = b; absorbed = a; }
+                    else if (a.Id < b.Id) { survivor = a; absorbed = b; }
+                    else { survivor = b; absorbed = a; }
+
+                    survivor.Mass = Rules.ClampMass(survivor.Mass + absorbed.Mass);
+                    _players.Remove(absorbed.Id);
+
+                    if (absorbed.Id == a.Id) break; // a is gone - nothing left for it to absorb this pass
                 }
             }
         }

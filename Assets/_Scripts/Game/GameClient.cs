@@ -13,10 +13,15 @@ using UnityEngine;
 // position/scale/mass/color, this class only mirrors it visually.
 public class GameClient : MonoBehaviour
 {
-    private enum ClientMsg : byte { Join = 1, Input = 2, Split = 3, Eject = 4 }
-    private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3 }
+    private enum ClientMsg : byte { Join = 1, Input = 2, Split = 3, Eject = 4, Emoji = 5 }
+    private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3, EmojiEvent = 4 }
     private const byte EntityTypeVirus = 2;
     private const byte EntityTypeSaw = 3;
+
+    // Daily quest thresholds - 3 fixed quests, no general-purpose quest system. Tune here only.
+    private const float QUEST_MASS_TARGET = 200f;
+    private const float QUEST_SURVIVE_TARGET = 120f;
+    private const int QUEST_RANK_TARGET = 3;
 
     public static GameClient instance;
 
@@ -35,6 +40,14 @@ public class GameClient : MonoBehaviour
 
     private uint myEntityId;
     private bool welcomed;
+
+    // Server never tells us who died or why (Devour() only merges mass, no kill log) - death is
+    // inferred client-side: mass was well above spawn size last tick, and dropped back to ~spawn
+    // size this tick (RespawnAsNew keeps the same entity Id, so the player list never loses us).
+    private PlayerData playerData;
+    private float lifeStartTime;
+    private float sessionPeakMass = PlayerBlob.MASS_MIN;
+    private float lastKnownMass = PlayerBlob.MASS_MIN;
 
     private readonly Dictionary<uint, PlayerBlob> players = new Dictionary<uint, PlayerBlob>();
     private readonly Dictionary<uint, AIBlob> bots = new Dictionary<uint, AIBlob>();
@@ -63,6 +76,9 @@ public class GameClient : MonoBehaviour
 
     private void Start()
     {
+        playerData = PlayerHandleData.LoadOrDefault();
+        ApplyStreakAndDailyReset();
+
         socket = new UdpClient();
         socket.Connect(serverHost, serverPort);
 
@@ -77,6 +93,42 @@ public class GameClient : MonoBehaviour
     {
         running = false;
         socket?.Close();
+
+        if (playerData != null)
+        {
+            PlayerHandleData.Save(playerData);
+        }
+    }
+
+    // GameClient.Start() is the one place PlayerData gets loaded per Game-scene session, so streak
+    // and daily-quest-reset both live here instead of a second load path elsewhere.
+    private void ApplyStreakAndDailyReset()
+    {
+        int today = Utils.secondsSinceEpoch() / 86400;
+
+        if (playerData.lastPlayedEpochDay == today - 1)
+        {
+            playerData.currentStreak++;
+        }
+        else if (playerData.lastPlayedEpochDay != today)
+        {
+            playerData.currentStreak = 1;
+        }
+        playerData.lastPlayedEpochDay = today;
+
+        if (playerData.questDay != today)
+        {
+            playerData.questDay = today;
+            playerData.questMassProgress = 0f;
+            playerData.questSurviveSeconds = 0f;
+            playerData.questTopRankReached = 999;
+            playerData.questMassDone = false;
+            playerData.questSurviveDone = false;
+            playerData.questRankDone = false;
+        }
+
+        Achievements.CheckNewlyUnlocked(playerData);
+        PlayerHandleData.Save(playerData);
     }
 
     private void Update()
@@ -144,6 +196,11 @@ public class GameClient : MonoBehaviour
     public void SendEject()
     {
         Send(new[] { (byte)ClientMsg.Eject });
+    }
+
+    public void SendEmoji(byte emojiId)
+    {
+        Send(new[] { (byte)ClientMsg.Emoji, emojiId });
     }
 
     private void Send(byte[] data)
@@ -239,6 +296,13 @@ public class GameClient : MonoBehaviour
                 Enqueue(() => ApplyFoodUpdates(chunk));
                 break;
             }
+            case ServerMsg.EmojiEvent:
+            {
+                uint entityId = r.ReadUInt32();
+                byte emojiId = r.ReadByte();
+                Enqueue(() => OnEmojiEvent(entityId, emojiId));
+                break;
+            }
         }
     }
 
@@ -285,6 +349,10 @@ public class GameClient : MonoBehaviour
         myEntityId = id;
         welcomed = true;
 
+        lifeStartTime = Time.time;
+        sessionPeakMass = PlayerBlob.MASS_MIN;
+        lastKnownMass = PlayerBlob.MASS_MIN;
+
         if (Map.instance != null)
         {
             Map.instance.ApplyMapSize(halfMapSize);
@@ -311,6 +379,11 @@ public class GameClient : MonoBehaviour
                 }
                 blob.username = e.Name;
                 blob.ApplyState(e.Position, e.Scale, e.Color, e.Mass);
+
+                if (e.Id == myEntityId)
+                {
+                    HandleLocalPlayerTick(e, leaderboard, blob);
+                }
             }
             else if (e.Type == EntityTypeVirus)
             {
@@ -357,6 +430,138 @@ public class GameClient : MonoBehaviour
         if (players.TryGetValue(myEntityId, out var mine) && mine.playerHud != null)
         {
             mine.playerHud.SetLeaderboard(leaderboard);
+        }
+    }
+
+    private void HandleLocalPlayerTick(EntityState e, List<(string Name, float Mass)> leaderboard, PlayerBlob blob)
+    {
+        bool died = lastKnownMass > PlayerBlob.MASS_MIN * 2f && e.Mass <= PlayerBlob.MASS_MIN * 1.05f;
+        if (died)
+        {
+            float survivedSeconds = Time.time - lifeStartTime;
+            HandleDeath(sessionPeakMass, survivedSeconds, blob);
+            lifeStartTime = Time.time;
+            sessionPeakMass = PlayerBlob.MASS_MIN;
+        }
+
+        sessionPeakMass = Mathf.Max(sessionPeakMass, e.Mass);
+        lastKnownMass = e.Mass;
+
+        UpdateQuests(e, leaderboard, blob);
+    }
+
+    private void HandleDeath(float peakMass, float survivedSeconds, PlayerBlob blob)
+    {
+        bool isNewRecord = false;
+        if (peakMass > playerData.bestMass)
+        {
+            playerData.bestMass = peakMass;
+            isNewRecord = true;
+        }
+        if (survivedSeconds > playerData.bestSurvivalSeconds)
+        {
+            playerData.bestSurvivalSeconds = survivedSeconds;
+            isNewRecord = true;
+        }
+        playerData.gamesPlayed++;
+
+        var newlyUnlocked = Achievements.CheckNewlyUnlocked(playerData);
+        PlayerHandleData.Save(playerData);
+
+        if (blob.playerHud != null)
+        {
+            blob.playerHud.ShowMatchSummary(peakMass, survivedSeconds, isNewRecord, newlyUnlocked);
+        }
+    }
+
+    private void UpdateQuests(EntityState e, List<(string Name, float Mass)> leaderboard, PlayerBlob blob)
+    {
+        int today = Utils.secondsSinceEpoch() / 86400;
+        if (playerData.questDay != today)
+        {
+            playerData.questDay = today;
+            playerData.questMassProgress = 0f;
+            playerData.questSurviveSeconds = 0f;
+            playerData.questTopRankReached = 999;
+            playerData.questMassDone = false;
+            playerData.questSurviveDone = false;
+            playerData.questRankDone = false;
+        }
+
+        bool justCompletedAQuest = false;
+
+        if (!playerData.questMassDone)
+        {
+            playerData.questMassProgress = Mathf.Max(playerData.questMassProgress, e.Mass);
+            if (playerData.questMassProgress >= QUEST_MASS_TARGET)
+            {
+                playerData.questMassDone = true;
+                justCompletedAQuest = true;
+            }
+        }
+
+        if (!playerData.questSurviveDone)
+        {
+            float currentLifeSeconds = Time.time - lifeStartTime;
+            playerData.questSurviveSeconds = Mathf.Max(playerData.questSurviveSeconds, currentLifeSeconds);
+            if (playerData.questSurviveSeconds >= QUEST_SURVIVE_TARGET)
+            {
+                playerData.questSurviveDone = true;
+                justCompletedAQuest = true;
+            }
+        }
+
+        if (!playerData.questRankDone)
+        {
+            for (int i = 0; i < leaderboard.Count; i++)
+            {
+                if (leaderboard[i].Name == e.Name)
+                {
+                    if (i + 1 < playerData.questTopRankReached) playerData.questTopRankReached = i + 1;
+                    break;
+                }
+            }
+            if (playerData.questTopRankReached <= QUEST_RANK_TARGET)
+            {
+                playerData.questRankDone = true;
+                justCompletedAQuest = true;
+            }
+        }
+
+        // Progress fields update every tick but only hit disk on an actual state transition (quest
+        // completed / achievement unlocked) - a per-tick File.WriteAllText would be wasteful. Any
+        // in-flight progress that never completes is still flushed by OnDestroy's Save().
+        var newlyUnlocked = Achievements.CheckNewlyUnlocked(playerData);
+        if (justCompletedAQuest || newlyUnlocked.Count > 0)
+        {
+            PlayerHandleData.Save(playerData);
+        }
+
+        UpdateDailyPanelDisplay(blob);
+    }
+
+    private void UpdateDailyPanelDisplay(PlayerBlob blob)
+    {
+        if (blob.playerHud == null)
+        {
+            return;
+        }
+
+        string massLine = string.Format("Quest: Reach {0} mass ({1}/{0}){2}",
+            (int)QUEST_MASS_TARGET, (int)Mathf.Min(playerData.questMassProgress, QUEST_MASS_TARGET), playerData.questMassDone ? " [done]" : "");
+        string surviveLine = string.Format("Quest: Survive {0}s ({1}/{0}){2}",
+            (int)QUEST_SURVIVE_TARGET, (int)Mathf.Min(playerData.questSurviveSeconds, QUEST_SURVIVE_TARGET), playerData.questSurviveDone ? " [done]" : "");
+        string rankLine = string.Format("Quest: Reach top {0}{1}", QUEST_RANK_TARGET, playerData.questRankDone ? " [done]" : "");
+        string streakLine = string.Format("Streak: {0} day(s)", playerData.currentStreak);
+
+        blob.playerHud.SetDailyPanelText(string.Join("\n", new[] { massLine, surviveLine, rankLine, streakLine }));
+    }
+
+    private void OnEmojiEvent(uint entityId, byte emojiId)
+    {
+        if (players.TryGetValue(entityId, out var blob))
+        {
+            blob.ShowEmoji(emojiId);
         }
     }
 

@@ -23,4 +23,16 @@ public static class PlayerHandleData
             return new PlayerData();
         }
     }
+
+    public static void Save(PlayerData data)
+    {
+        try
+        {
+            File.WriteAllText(SavePath, JsonUtility.ToJson(data));
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Failed to save player data: {e}");
+        }
+    }
 }
