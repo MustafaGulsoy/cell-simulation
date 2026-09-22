@@ -320,7 +320,11 @@ public sealed class GameWorld
             MergeEligibleUtc = mergeAt,
         };
         piece.MergeEligibleUtc = mergeAt;
-        StartLaunch(piece, dir);
+        // Only the new clone launches - piece (the group's original entity, which for the primary
+        // piece is the one the client's camera follows) stays exactly where it was. Matches
+        // PopVirusOn/PopSawOnBot below, which never launch the source entity either; this was the
+        // one split path that inconsistently yanked both pieces apart, which is what made pressing
+        // split look like the camera itself got shoved.
         StartLaunch(clone, dir);
         _players[clone.Id] = clone;
     }
