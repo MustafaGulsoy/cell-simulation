@@ -95,7 +95,10 @@ public sealed class UdpServerService : BackgroundService
             case ClientMsg.Emoji:
                 // Relayed straight to the room's sessions, right here off the tick loop - no kill
                 // log, no per-tick batching, just a fire-and-forget broadcast like Welcome/FoodFull.
-                if (_rooms.TryGetRoom(from, out var emojiRoom) && emojiRoom.Sessions.TryGetValue(from, out var emojiEntityId))
+                // Still cooldown-gated through GameWorld so one client can't flood everyone else's
+                // bandwidth by spamming Emoji packets.
+                if (_rooms.TryGetRoom(from, out var emojiRoom) && emojiRoom.Sessions.TryGetValue(from, out var emojiEntityId)
+                    && emojiRoom.World.TryEmojiCooldown(emojiEntityId))
                 {
                     var packet = Protocol.EncodeEmojiEvent(emojiEntityId, emoji.EmojiId);
                     foreach (var endPoint in emojiRoom.Sessions.Keys)

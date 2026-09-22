@@ -17,6 +17,14 @@ public class AIBlob : MonoBehaviour
     private bool colorInitialized;
     private float currentScale = -1f;
 
+    // Same network-smoothing + squash-pop feedback as PlayerBlob - see its comments for why. Bots
+    // get exactly the same "just been split/popped" treatment since virus/saw hazards affect them
+    // just as much as players.
+    private const float PositionSmoothingRate = 20f;
+    private Vector2 targetPosition;
+    private bool hasTargetPosition;
+    private float punchScale = 1f;
+
     public void Init(uint id, string name)
     {
         entityId = id;
@@ -24,11 +32,17 @@ public class AIBlob : MonoBehaviour
 
         blobCircle.Spawn();
         aiHud.Spawn(name);
+        PlayPopAnimation();
     }
 
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
     {
-        transform.position = position;
+        targetPosition = position;
+        if (!hasTargetPosition)
+        {
+            hasTargetPosition = true;
+            transform.position = position;
+        }
 
         if (!colorInitialized || color != currentColor)
         {
@@ -40,12 +54,43 @@ public class AIBlob : MonoBehaviour
 
         if (!Mathf.Approximately(currentScale, scale))
         {
+            bool poppedSmaller = currentScale > 0f && scale < currentScale * 0.85f;
+
             currentScale = scale;
-            transform.localScale = new Vector3(scale, scale, 1f);
+            ApplyCombinedScale();
             UpdateOrderLayer((int)scale);
+
+            if (poppedSmaller) PlayPopAnimation();
         }
 
         aiHud.setBlobScoreText(mass);
+    }
+
+    private void Update()
+    {
+        if (!hasTargetPosition) return;
+        transform.position = Vector2.Lerp(transform.position, targetPosition, 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
+    }
+
+    private void ApplyCombinedScale()
+    {
+        if (currentScale < 0f) return;
+        float s = currentScale * punchScale;
+        transform.localScale = new Vector3(s, s, 1f);
+    }
+
+    private void PlayPopAnimation()
+    {
+        LeanTween.cancel(gameObject, false);
+        punchScale = 0.55f;
+        ApplyCombinedScale();
+        LeanTween.value(gameObject, punchScale, 1f, 0.3f)
+            .setEase(LeanTweenType.easeOutBack)
+            .setOnUpdate((float v) =>
+            {
+                punchScale = v;
+                ApplyCombinedScale();
+            });
     }
 
     private void UpdateOrderLayer(int order)

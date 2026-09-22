@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="CellSimulator.Server.Tests/CellSimulator.Server.Tests.csproj" />
+  <Project Path="CellSimulator.Server/CellSimulator.Server.csproj" />
+</Solution>

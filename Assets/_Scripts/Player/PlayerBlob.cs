@@ -43,6 +43,20 @@ public class PlayerBlob : MonoBehaviour
     private bool colorInitialized;
     private float currentScale = -1f;
 
+    // Position arrives from the server at the 30Hz tick rate, not every render frame - snapping
+    // straight to it (as this used to) means the object sits still for ~33ms then teleports, which
+    // Cinemachine's follow damping reads as a jolt rather than motion. Most visible right when a
+    // split launches an otherwise-still blob, since there's no prior motion to mask the teleport.
+    // Smoothing toward the latest reported position every frame (below) turns that into a
+    // continuous slide instead, without adding perceptible input lag at this network tick rate.
+    private const float PositionSmoothingRate = 20f;
+    private Vector2 targetPosition;
+    private bool hasTargetPosition;
+
+    // Squash/pop feedback (LeanTween) - separate from the network-driven scale so a snapshot
+    // arriving mid-tween can't stomp it: ApplyCombinedScale() always multiplies the two together.
+    private float punchScale = 1f;
+
     private void Awake()
     {
         blobDetailCanvas.worldCamera = Camera.main;
@@ -57,11 +71,13 @@ public class PlayerBlob : MonoBehaviour
         username = name;
 
         blobCircle.Spawn();
+        PlayPopAnimation();
 
         if (mine)
         {
             instance = this;
             playerHud.ShowPlaying(name);
+            playerHud.updateJoystickColor();
         }
         else
         {
@@ -78,7 +94,12 @@ public class PlayerBlob : MonoBehaviour
 
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
     {
-        transform.position = position;
+        targetPosition = position;
+        if (!hasTargetPosition)
+        {
+            hasTargetPosition = true;
+            transform.position = position; // first sighting of this blob - nothing to smooth from yet
+        }
 
         if (!colorInitialized || color != currentColor)
         {
@@ -90,10 +111,17 @@ public class PlayerBlob : MonoBehaviour
 
         if (!Mathf.Approximately(currentScale, scale))
         {
+            // A same-tick drop of >15% only happens from a split/virus/saw pop, never from normal
+            // growth/shrink pacing - that's the cue for the squash feedback, not a separate flag
+            // the server would have to send.
+            bool poppedSmaller = currentScale > 0f && scale < currentScale * 0.85f;
+
             currentScale = scale;
-            transform.localScale = new Vector3(scale, scale, 1f);
+            ApplyCombinedScale();
             UpdateOrderLayer((int)scale);
             UpdateOrthographicSize(scale);
+
+            if (poppedSmaller) PlayPopAnimation();
         }
 
         if (isMine)
@@ -101,6 +129,16 @@ public class PlayerBlob : MonoBehaviour
             playerHud.setBlobScoreText(mass);
             playerHud.setScoreCounterText(mass);
         }
+    }
+
+    private void Update()
+    {
+        if (!hasTargetPosition)
+        {
+            return;
+        }
+
+        transform.position = Vector2.Lerp(transform.position, targetPosition, 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
     }
 
     private void LateUpdate()
@@ -119,6 +157,32 @@ public class PlayerBlob : MonoBehaviour
         {
             virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, nextOrthographicSize, 3f * Time.deltaTime);
         }
+    }
+
+    private void ApplyCombinedScale()
+    {
+        if (currentScale < 0f) return; // Init's pop plays before the first ApplyState sets a real scale
+        float s = currentScale * punchScale;
+        transform.localScale = new Vector3(s, s, 1f);
+    }
+
+    /// <summary>A quick squash-then-settle "pop" - plays when this blob first appears (covers a
+    /// split clone, which is a brand new entity Id to the client) and again whenever its own scale
+    /// suddenly drops (the piece that stayed behind after a split/pop). Drives a multiplier on top
+    /// of the network-true scale (see ApplyCombinedScale) so a Snapshot landing mid-tween can't cut
+    /// it short.</summary>
+    private void PlayPopAnimation()
+    {
+        LeanTween.cancel(gameObject, false);
+        punchScale = 0.55f;
+        ApplyCombinedScale();
+        LeanTween.value(gameObject, punchScale, 1f, 0.3f)
+            .setEase(LeanTweenType.easeOutBack)
+            .setOnUpdate((float v) =>
+            {
+                punchScale = v;
+                ApplyCombinedScale();
+            });
     }
 
     private void UpdateOrderLayer(int order)

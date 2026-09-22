@@ -22,6 +22,7 @@ public sealed class GameWorld
 
     private readonly Dictionary<uint, DateTime> _lastSplitUtc = new();
     private readonly Dictionary<uint, DateTime> _lastEjectUtc = new();
+    private readonly Dictionary<uint, DateTime> _lastEmojiUtc = new();
 
     // Per-group "cursor" point that the joystick moves - every piece the player owns steers
     // toward this shared point instead of moving in lockstep parallel to the raw input direction,
@@ -146,6 +147,20 @@ public sealed class GameWorld
         _bots[bot.Id] = bot;
     }
 
+    // Names are rendered as-is by every client's TextMeshPro labels (rich-text enabled), so a
+    // raw "<color=red>...</color>"-style name could reformat/spoof another player's on-screen UI.
+    // Stripped here, once, at the only place a name enters the world - every client (present and
+    // future) inherits the fix for free instead of each one re-escaping on the way in.
+    private const int MaxNameLength = 20;
+
+    private static string SanitizeName(string? name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return "Unnamed";
+        var stripped = name.Replace("<", "").Replace(">", "").Trim();
+        if (stripped.Length > MaxNameLength) stripped = stripped[..MaxNameLength];
+        return string.IsNullOrWhiteSpace(stripped) ? "Unnamed" : stripped;
+    }
+
     public PlayerEntity AddPlayer(string name, IPEndPoint endPoint)
     {
         lock (_gate)
@@ -156,7 +171,7 @@ public sealed class GameWorld
                 Position = RandomPosition(),
                 Mass = Rules.MassMin,
                 Color = Rgba.Random(_rng),
-                Name = string.IsNullOrWhiteSpace(name) ? "Unnamed" : name,
+                Name = SanitizeName(name),
                 EndPoint = endPoint,
             };
             player.GroupId = player.Id;
@@ -176,6 +191,7 @@ public sealed class GameWorld
             foreach (var pid in toRemove) _players.Remove(pid);
             _lastSplitUtc.Remove(id);
             _lastEjectUtc.Remove(id);
+            _lastEmojiUtc.Remove(id);
             _groupTargets.Remove(id);
         }
     }
@@ -265,6 +281,21 @@ public sealed class GameWorld
             }
 
             if (ejectedAny) _lastEjectUtc[groupId] = now;
+        }
+    }
+
+    /// <summary>Emoji had no server-side throttle at all - unlike Split/Eject, a flood of Emoji
+    /// packets costs nothing to validate but gets broadcast to every session in the room, so a
+    /// spamming client could burden everyone else's bandwidth. Same cooldown pattern as
+    /// Split/Eject.</summary>
+    public bool TryEmojiCooldown(uint entityId)
+    {
+        lock (_gate)
+        {
+            var now = DateTime.UtcNow;
+            if (_lastEmojiUtc.TryGetValue(entityId, out var last) && now - last < Rules.EmojiCooldown) return false;
+            _lastEmojiUtc[entityId] = now;
+            return true;
         }
     }
 

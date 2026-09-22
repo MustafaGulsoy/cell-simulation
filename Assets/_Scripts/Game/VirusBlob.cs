@@ -19,14 +19,28 @@ public class VirusBlob : MonoBehaviour
     private bool colorInitialized;
     private float currentScale = -1f;
 
+    // Same network-smoothing + spawn-pop feedback as PlayerBlob/AIBlob/SawBlob - viruses never
+    // split/shrink, so this only ever plays once, when a new virus spawns (including its
+    // respawn-elsewhere after popping a cell).
+    private const float PositionSmoothingRate = 20f;
+    private Vector2 targetPosition;
+    private bool hasTargetPosition;
+    private float punchScale = 1f;
+
     public void Init(uint id)
     {
         entityId = id;
+        PlayPopAnimation();
     }
 
     public void ApplyState(Vector2 position, float scale, Color color)
     {
-        transform.position = position;
+        targetPosition = position;
+        if (!hasTargetPosition)
+        {
+            hasTargetPosition = true;
+            transform.position = position;
+        }
 
         if (!colorInitialized)
         {
@@ -37,9 +51,35 @@ public class VirusBlob : MonoBehaviour
         if (!Mathf.Approximately(currentScale, scale))
         {
             currentScale = scale;
-            float localScale = scale / SpriteNativeSize;
-            transform.localScale = new Vector3(localScale, localScale, 1f);
+            ApplyCombinedScale();
             sortingGroup.sortingOrder = 100 + (int)scale;
         }
+    }
+
+    private void Update()
+    {
+        if (!hasTargetPosition) return;
+        transform.position = Vector2.Lerp(transform.position, targetPosition, 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
+    }
+
+    private void ApplyCombinedScale()
+    {
+        if (currentScale < 0f) return;
+        float localScale = (currentScale / SpriteNativeSize) * punchScale;
+        transform.localScale = new Vector3(localScale, localScale, 1f);
+    }
+
+    private void PlayPopAnimation()
+    {
+        LeanTween.cancel(gameObject, false);
+        punchScale = 0.55f;
+        ApplyCombinedScale();
+        LeanTween.value(gameObject, punchScale, 1f, 0.3f)
+            .setEase(LeanTweenType.easeOutBack)
+            .setOnUpdate((float v) =>
+            {
+                punchScale = v;
+                ApplyCombinedScale();
+            });
     }
 }

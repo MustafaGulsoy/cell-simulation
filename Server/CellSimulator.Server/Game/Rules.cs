@@ -41,6 +41,10 @@ public static class Rules
     public static TimeSpan SplitCooldown => SplitEjectCooldown;
     public static TimeSpan EjectCooldown => SplitEjectCooldown;
 
+    // Matches the client's EMOJI_BUBBLE_DURATION (PlayerBlob.cs) so a new emoji can't interrupt
+    // the previous bubble's own display time.
+    public static readonly TimeSpan EmojiCooldown = TimeSpan.FromSeconds(1.5);
+
     // Split/pop launch animation: a lerp from start to a size-proportional target (bigger cell ->
     // farther AND faster, since distance/duration = speed and duration is fixed), eased so ~90%
     // of the distance covers quickly and the last stretch creeps in - like it caught on something
@@ -126,14 +130,15 @@ public enum MapSize
 
 public static class MapSizes
 {
-    // +50% over the original sizes (100/200/400/600/1000 -> 150/300/600/900/1500 scaled from the
-    // 200/400/600/1000 set actually shipped).
+    // 3x the previous 1500/900/600/300 set (which was itself +50% over the original shipped
+    // 1000/600/400/200). FoodCount/BotCount/VirusCount/SawCount/PlayerCapacity in GameWorld all
+    // derive from this side length already, so they scale up automatically - nothing else to tune.
     public static int SideLength(MapSize size) => size switch
     {
-        MapSize.Huge => 1500,
-        MapSize.Large => 900,
-        MapSize.Medium => 600,
-        MapSize.Small => 300,
-        _ => 300,
+        MapSize.Huge => 4500,
+        MapSize.Large => 2700,
+        MapSize.Medium => 1800,
+        MapSize.Small => 900,
+        _ => 900,
     };
 }

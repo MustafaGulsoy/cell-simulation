@@ -53,7 +53,7 @@ public class GameClient : MonoBehaviour
     private readonly Dictionary<uint, AIBlob> bots = new Dictionary<uint, AIBlob>();
     private readonly Dictionary<uint, VirusBlob> viruses = new Dictionary<uint, VirusBlob>();
     private readonly Dictionary<uint, SawBlob> saws = new Dictionary<uint, SawBlob>();
-    private readonly Dictionary<uint, GameObject> food = new Dictionary<uint, GameObject>();
+    private readonly Dictionary<uint, Food> food = new Dictionary<uint, Food>();
 
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
     private readonly object queueLock = new object();
@@ -78,6 +78,15 @@ public class GameClient : MonoBehaviour
     {
         playerData = PlayerHandleData.LoadOrDefault();
         ApplyStreakAndDailyReset();
+
+        // playerData.nightMode already existed (set from the Main Menu toggle) but nothing ever
+        // read it - the background never actually changed. PlayerHUD.updateJoystickColor already
+        // adapts joystick tint to Camera.main.backgroundColor, it just needed something to set
+        // that color in the first place.
+        if (Camera.main != null)
+        {
+            Camera.main.backgroundColor = playerData.nightMode ? Color.black : Color.white;
+        }
 
         socket = new UdpClient();
         socket.Connect(serverHost, serverPort);
@@ -571,10 +580,10 @@ public class GameClient : MonoBehaviour
         {
             if (!food.TryGetValue(id, out var obj))
             {
-                obj = Instantiate(foodPrefab);
+                obj = Instantiate(foodPrefab).GetComponent<Food>();
                 food[id] = obj;
             }
-            obj.transform.position = pos;
+            obj.SetPosition(pos);
         }
     }
 

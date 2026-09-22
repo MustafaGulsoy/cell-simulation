@@ -1,0 +1,33 @@
+name: Server build & test
+
+# Builds and tests the standalone .NET game server (Server/CellSimulator.Server) - the Unity
+# client isn't built here, only the server the client's UDP protocol talks to.
+
+on:
+  push:
+    branches: [main]
+    paths: ["Server/**"]
+  pull_request:
+    paths: ["Server/**"]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: dotnet restore
+        working-directory: Server
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+        working-directory: Server
+
+      - name: Test
+        run: dotnet test --no-build -c Release
+        working-directory: Server

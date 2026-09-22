@@ -24,6 +24,11 @@ public class MainMenuHandler : MonoBehaviour
     [SerializeField] private TMP_Dropdown mapSizeDropdown;
     [SerializeField] private TMP_InputField serverIpInput;
 
+    // Optional - wire a Toggle to this slot in the Inspector to expose the dark-theme background
+    // (PlayerData.nightMode already existed; GameClient.Start()/PlayerHUD.updateJoystickColor now
+    // actually act on it). Left unassigned, this is simply a no-op like serverIpInput's guard.
+    [SerializeField] private Toggle nightModeToggle;
+
     private void Awake() {
         // Server address is fixed - players never see or edit it.
         if(serverIpInput != null)
@@ -37,6 +42,18 @@ public class MainMenuHandler : MonoBehaviour
             mapSizeDropdown.AddOptions(MapSizeOptions);
             mapSizeDropdown.value = PlayerPrefs.GetInt(MapSizePrefKey, DefaultMapSizeIndex);
             mapSizeDropdown.onValueChanged.AddListener(v => PlayerPrefs.SetInt(MapSizePrefKey, v));
+        }
+
+        if (nightModeToggle != null)
+        {
+            var data = PlayerHandleData.LoadOrDefault();
+            nightModeToggle.isOn = data.nightMode;
+            nightModeToggle.onValueChanged.AddListener(isOn =>
+            {
+                var current = PlayerHandleData.LoadOrDefault();
+                current.nightMode = isOn;
+                PlayerHandleData.Save(current);
+            });
         }
 
         playButton.onClick.AddListener(() => {
