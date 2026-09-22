@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
 
@@ -24,6 +25,7 @@ public class AIBlob : MonoBehaviour
     private Vector2 targetPosition;
     private bool hasTargetPosition;
     private float punchScale = 1f;
+    private Coroutine popCoroutine;
 
     public void Init(uint id, string name)
     {
@@ -81,16 +83,27 @@ public class AIBlob : MonoBehaviour
 
     private void PlayPopAnimation()
     {
-        LeanTween.cancel(gameObject, false);
-        punchScale = 0.55f;
+        if (popCoroutine != null) StopCoroutine(popCoroutine);
+        popCoroutine = StartCoroutine(PopAnimation());
+    }
+
+    private IEnumerator PopAnimation()
+    {
+        const float duration = 0.3f;
+        const float startScale = 0.55f;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            punchScale = Mathf.LerpUnclamped(startScale, 1f, Utils.EaseOutBack(Mathf.Clamp01(elapsed / duration)));
+            ApplyCombinedScale();
+            yield return null;
+        }
+
+        punchScale = 1f;
         ApplyCombinedScale();
-        LeanTween.value(gameObject, punchScale, 1f, 0.3f)
-            .setEase(LeanTweenType.easeOutBack)
-            .setOnUpdate((float v) =>
-            {
-                punchScale = v;
-                ApplyCombinedScale();
-            });
+        popCoroutine = null;
     }
 
     private void UpdateOrderLayer(int order)

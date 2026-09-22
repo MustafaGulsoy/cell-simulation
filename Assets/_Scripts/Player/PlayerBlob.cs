@@ -53,9 +53,10 @@ public class PlayerBlob : MonoBehaviour
     private Vector2 targetPosition;
     private bool hasTargetPosition;
 
-    // Squash/pop feedback (LeanTween) - separate from the network-driven scale so a snapshot
-    // arriving mid-tween can't stomp it: ApplyCombinedScale() always multiplies the two together.
+    // Squash/pop feedback - separate from the network-driven scale so a snapshot arriving
+    // mid-animation can't stomp it: ApplyCombinedScale() always multiplies the two together.
     private float punchScale = 1f;
+    private Coroutine popCoroutine;
 
     private void Awake()
     {
@@ -173,16 +174,27 @@ public class PlayerBlob : MonoBehaviour
     /// it short.</summary>
     private void PlayPopAnimation()
     {
-        LeanTween.cancel(gameObject, false);
-        punchScale = 0.55f;
+        if (popCoroutine != null) StopCoroutine(popCoroutine);
+        popCoroutine = StartCoroutine(PopAnimation());
+    }
+
+    private IEnumerator PopAnimation()
+    {
+        const float duration = 0.3f;
+        const float startScale = 0.55f;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            punchScale = Mathf.LerpUnclamped(startScale, 1f, Utils.EaseOutBack(Mathf.Clamp01(elapsed / duration)));
+            ApplyCombinedScale();
+            yield return null;
+        }
+
+        punchScale = 1f;
         ApplyCombinedScale();
-        LeanTween.value(gameObject, punchScale, 1f, 0.3f)
-            .setEase(LeanTweenType.easeOutBack)
-            .setOnUpdate((float v) =>
-            {
-                punchScale = v;
-                ApplyCombinedScale();
-            });
+        popCoroutine = null;
     }
 
     private void UpdateOrderLayer(int order)

@@ -17,6 +17,7 @@ public class Food : MonoBehaviour
     private Vector2 targetPosition;
     private bool hasTargetPosition;
     private float punchScale = 1f;
+    private Coroutine popCoroutine;
 
     private void Awake()
     {
@@ -65,16 +66,27 @@ public class Food : MonoBehaviour
 
     private void PlayPopAnimation()
     {
-        LeanTween.cancel(gameObject, false);
-        punchScale = 0.4f;
+        if (popCoroutine != null) StopCoroutine(popCoroutine);
+        popCoroutine = StartCoroutine(PopAnimation());
+    }
+
+    private IEnumerator PopAnimation()
+    {
+        const float duration = 0.25f;
+        const float startScale = 0.4f;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            punchScale = Mathf.LerpUnclamped(startScale, 1f, Utils.EaseOutBack(Mathf.Clamp01(elapsed / duration)));
+            ApplyPunchScale();
+            yield return null;
+        }
+
+        punchScale = 1f;
         ApplyPunchScale();
-        LeanTween.value(gameObject, punchScale, 1f, 0.25f)
-            .setEase(LeanTweenType.easeOutBack)
-            .setOnUpdate((float v) =>
-            {
-                punchScale = v;
-                ApplyPunchScale();
-            });
+        popCoroutine = null;
     }
 
     private void ApplyPunchScale()
