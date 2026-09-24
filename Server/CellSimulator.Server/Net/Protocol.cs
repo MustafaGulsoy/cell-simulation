@@ -24,13 +24,17 @@ public enum ServerMsg : byte
 /// <summary>Tiny binary protocol - no NGO, no reflection, just BinaryReader/Writer over UDP payloads.</summary>
 public static class Protocol
 {
-    public static byte[] EncodeWelcome(uint yourEntityId, int halfMapSize)
+    /// <summary>[type][entityId][halfWidth][halfHeight]. Older clients only read the first three
+    /// fields (they treat the map as a square of halfWidth) and ignore the trailing halfHeight, so
+    /// appending it is backwards compatible.</summary>
+    public static byte[] EncodeWelcome(uint yourEntityId, int halfWidth, int halfHeight)
     {
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
         w.Write((byte)ServerMsg.Welcome);
         w.Write(yourEntityId);
-        w.Write(halfMapSize);
+        w.Write(halfWidth);
+        w.Write(halfHeight);
         return ms.ToArray();
     }
 
@@ -43,6 +47,24 @@ public static class Protocol
         IReadOnlyCollection<FoodItem> changedFood,
         List<(string Name, float Mass)> leaderboard)
     {
+        var everything = new List<Entity>(players.Count + bots.Count + viruses.Count + saws.Count);
+        everything.AddRange(players);
+        everything.AddRange(bots);
+        everything.AddRange(viruses);
+        everything.AddRange(saws);
+        return EncodeSnapshot(tick, everything, changedFood, leaderboard);
+    }
+
+    /// <summary>The snapshot for one viewer: whatever subset of the world (see InterestManager) is
+    /// passed in as <paramref name="entities"/>, plus every food change.</summary>
+    public static byte[] EncodeSnapshot(
+        uint tick,
+        IReadOnlyCollection<Entity> entities,
+        IReadOnlyCollection<FoodItem> changedFood,
+        List<(string Name, float Mass)> leaderboard)
+    {
+        var players = entities.OfType<PlayerEntity>().ToList();
+
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
         w.Write((byte)ServerMsg.Snapshot);
@@ -55,11 +77,8 @@ public static class Protocol
             w.Write(mass);
         }
 
-        w.Write((ushort)(players.Count + bots.Count + viruses.Count + saws.Count));
-        foreach (var p in players) WriteEntity(w, p.Id, p.Type, p.Position, p.Scale, p.Mass, p.Color, p.Name);
-        foreach (var a in bots) WriteEntity(w, a.Id, a.Type, a.Position, a.Scale, a.Mass, a.Color, a.Name);
-        foreach (var v in viruses) WriteEntity(w, v.Id, v.Type, v.Position, v.Scale, v.Mass, v.Color, v.Name);
-        foreach (var s in saws) WriteEntity(w, s.Id, s.Type, s.Position, s.Scale, s.Mass, s.Color, s.Name);
+        w.Write((ushort)entities.Count);
+        foreach (var e in entities) WriteEntity(w, e.Id, e.Type, e.Position, e.Scale, e.Mass, e.Color, e.Name);
 
         w.Write((ushort)changedFood.Count);
         foreach (var f in changedFood)
@@ -67,6 +86,17 @@ public static class Protocol
             w.Write(f.Id);
             w.Write(f.Position.X);
             w.Write(f.Position.Y);
+        }
+
+        // Trailing section (old clients stop reading before it): which player entities belong to
+        // which player, for every player that's currently split. Lets a client find ALL of its own
+        // pieces (GroupId == its session id) to frame the camera on the whole group.
+        var splitOwners = players.GroupBy(p => p.GroupId).Where(g => g.Count() > 1).SelectMany(g => g).ToList();
+        w.Write((ushort)splitOwners.Count);
+        foreach (var p in splitOwners)
+        {
+            w.Write(p.Id);
+            w.Write(p.GroupId);
         }
 
         return ms.ToArray();

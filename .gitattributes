@@ -1,0 +1,2 @@
+# deploy.sh runs under bash on Linux/git-bash: CRLF would break it, whatever core.autocrlf says
+*.sh text eol=lf

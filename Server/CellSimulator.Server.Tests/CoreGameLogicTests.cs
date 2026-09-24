@@ -34,13 +34,20 @@ public class CoreGameLogicTests
     }
 
     [Fact]
-    public void MovementSpeedForScale_IsFasterWhenSmaller()
+    public void MovementSpeedForMass_FallsSmoothlyWithSizeAndStaysInBounds()
     {
-        float small = Rules.MovementSpeedForScale(Rules.BlobScaleMin);
-        float big = Rules.MovementSpeedForScale(Rules.BlobScaleMax);
-        Assert.True(small > big);
-        Assert.Equal(Rules.MovementSpeedMax, small, precision: 4);
-        Assert.Equal(Rules.MovementSpeedMin, big, precision: 4);
+        var cfg = GameConfig.Current;
+        float previous = float.MaxValue;
+        foreach (float mass in new[] { 5f, 20f, 100f, 500f, 2000f, 10_000f, 100_000f, Rules.MassMax })
+        {
+            float speed = Rules.MovementSpeedForMass(mass);
+            Assert.InRange(speed, cfg.MinSpeed, cfg.MaxSpeed);
+            Assert.True(speed <= previous, "bigger cells must never be faster");
+            previous = speed;
+        }
+
+        Assert.Equal(cfg.MaxSpeed, Rules.MovementSpeedForMass(Rules.MassMin), precision: 3);
+        Assert.Equal(cfg.MinSpeed, Rules.MovementSpeedForMass(Rules.MassMax), precision: 3);
     }
 
     [Fact]

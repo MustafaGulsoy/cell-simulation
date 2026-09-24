@@ -35,21 +35,20 @@ public abstract class Entity
     public Rgba Color;
     public string Name = "";
 
-    // Decaying outward impulse used by GameWorld.ResolveSplitSeparation's ongoing "keep siblings
-    // apart" spring (NOT the initial split launch - that's the Launch* fields below). Only
-    // PlayerEntity ever sets this, but living on the base type keeps MoveEntity<T> generic.
-    public Vector2 SplitVelocity;
-
-    // The initial "just been split/popped" launch: a size-proportional lerp from LaunchStart to
-    // LaunchTarget eased fast-then-slow (GameWorld.StartLaunch/MoveEntity), not a physics
-    // simulation - while IsLaunching is true this fully overrides normal movement for the entity.
-    public Vector2 LaunchStart;
-    public Vector2 LaunchTarget;
+    // The initial "just been split/popped" launch (GameWorld.StartLaunch/MoveEntity): a smoothstep
+    // displacement of LaunchDistance along LaunchDir over LaunchDuration, ADDED to the entity's
+    // normal steering - so a launched piece is still controllable and hands over to plain movement
+    // without a speed jump. LaunchSource is the piece it was thrown from; the pair doesn't collide
+    // while the launch runs (otherwise the source would be shoved off the spot it stayed on).
+    public Vector2 LaunchDir;
+    public float LaunchDistance;
+    public float LaunchDuration;
     public float LaunchElapsed;
     public bool IsLaunching;
+    public Entity? LaunchSource;
 
-    // Per-entity saw-pop cooldown gate; only players/bots ever get hit, but lives on the base
-    // type since ResolveSawCollisions iterates AllBlobs() (both) uniformly.
+    // Per-entity spike-pop cooldown gate; only players/bots ever get hit, but lives on the base
+    // type since the hazard pass iterates both uniformly.
     public DateTime LastSawHitUtc = DateTime.MinValue;
 
     public float Scale => Rules.CalculateScale(Mass);
@@ -66,6 +65,11 @@ public sealed class FoodItem
     // even after the pellet has slowed to a stop by the time it reaches one. Zero for ordinary
     // (non-ejected) food, which is what marks a pellet as "feed-eligible" for a saw.
     public Vector2 EjectDirection;
+
+    // Seconds left before this pellet can be eaten. A freshly thrown pellet starts at the edge of
+    // the piece that threw it (and of that piece's just-created siblings), so without a grace
+    // period they'd swallow it again the very tick it appeared.
+    public float EatImmunity;
 
     public const float Radius = 1.25f; // matches Food.SCALE / 2 in the original Unity project
 }

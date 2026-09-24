@@ -37,6 +37,10 @@ public class GameClient : MonoBehaviour
     private UdpClient socket;
     private Thread receiveThread;
     private volatile bool running;
+    private uint lastSnapshotTick; // receive thread only
+
+    private const float JOIN_RETRY_SECONDS = 1f;
+    private float nextJoinRetryTime;
 
     private uint myEntityId;
     private bool welcomed;
@@ -54,6 +58,7 @@ public class GameClient : MonoBehaviour
     private readonly Dictionary<uint, VirusBlob> viruses = new Dictionary<uint, VirusBlob>();
     private readonly Dictionary<uint, SawBlob> saws = new Dictionary<uint, SawBlob>();
     private readonly Dictionary<uint, Food> food = new Dictionary<uint, Food>();
+    private readonly List<PlayerBlob> ownPieces = new List<PlayerBlob>();
 
     private readonly Queue<Action> mainThreadActions = new Queue<Action>();
     private readonly object queueLock = new object();
@@ -96,6 +101,7 @@ public class GameClient : MonoBehaviour
         receiveThread.Start();
 
         SendJoin(PlayerPrefs.GetString("username", ""));
+        nextJoinRetryTime = Time.unscaledTime + JOIN_RETRY_SECONDS;
     }
 
     private void OnDestroy()
@@ -142,6 +148,15 @@ public class GameClient : MonoBehaviour
 
     private void Update()
     {
+        // UDP: the Join (or the server's Welcome) can simply be lost, which used to leave the
+        // client waiting forever. The server treats a repeat Join from the same endpoint as
+        // idempotent, so retrying until Welcome arrives is safe.
+        if (!welcomed && Time.unscaledTime >= nextJoinRetryTime)
+        {
+            nextJoinRetryTime = Time.unscaledTime + JOIN_RETRY_SECONDS;
+            SendJoin(PlayerPrefs.GetString("username", ""));
+        }
+
         lock (queueLock)
         {
             while (mainThreadActions.Count > 0)
@@ -260,13 +275,22 @@ public class GameClient : MonoBehaviour
             case ServerMsg.Welcome:
             {
                 uint id = r.ReadUInt32();
-                int half = r.ReadInt32();
-                Enqueue(() => OnWelcome(id, half));
+                int halfWidth = r.ReadInt32();
+                // Older servers only send a square's half size; the height was appended later.
+                int halfHeight = ms.Position + 4 <= ms.Length ? r.ReadInt32() : halfWidth;
+                Enqueue(() => OnWelcome(id, halfWidth, halfHeight));
                 break;
             }
             case ServerMsg.Snapshot:
             {
                 uint tick = r.ReadUInt32();
+
+                // UDP can deliver snapshots late or out of order; applying an older one snaps every
+                // blob back a tick (reads as jitter, worst over a remote server). Only a small
+                // backwards window is dropped so a server restart (tick counter resets) still gets through.
+                int tickDelta = (int)(tick - lastSnapshotTick);
+                if (tickDelta <= 0 && tickDelta > -300) break;
+                lastSnapshotTick = tick;
 
                 byte leaderboardCount = r.ReadByte();
                 var leaderboard = new List<(string Name, float Mass)>(leaderboardCount);
@@ -291,7 +315,19 @@ public class GameClient : MonoBehaviour
                     foodUpdates.Add((r.ReadUInt32(), new Vector2(r.ReadSingle(), r.ReadSingle())));
                 }
 
-                Enqueue(() => OnSnapshot(entities, foodUpdates, leaderboard));
+                // Trailing section (absent from older servers): which player entities belong to which
+                // player (entity id -> the owner's session id), for every player that is split.
+                var groupOf = new Dictionary<uint, uint>();
+                if (ms.Position + 2 <= ms.Length)
+                {
+                    ushort owners = r.ReadUInt16();
+                    for (int i = 0; i < owners; i++)
+                    {
+                        groupOf[r.ReadUInt32()] = r.ReadUInt32();
+                    }
+                }
+
+                Enqueue(() => OnSnapshot(entities, foodUpdates, leaderboard, groupOf));
                 break;
             }
             case ServerMsg.FoodFull:
@@ -353,7 +389,7 @@ public class GameClient : MonoBehaviour
 
     // ---- applying state (main thread) ----
 
-    private void OnWelcome(uint id, int halfMapSize)
+    private void OnWelcome(uint id, int halfMapWidth, int halfMapHeight)
     {
         myEntityId = id;
         welcomed = true;
@@ -364,11 +400,11 @@ public class GameClient : MonoBehaviour
 
         if (Map.instance != null)
         {
-            Map.instance.ApplyMapSize(halfMapSize);
+            Map.instance.ApplyMapSize(halfMapWidth, halfMapHeight);
         }
     }
 
-    private void OnSnapshot(List<EntityState> entities, List<(uint id, Vector2 pos)> foodUpdates, List<(string Name, float Mass)> leaderboard)
+    private void OnSnapshot(List<EntityState> entities, List<(uint id, Vector2 pos)> foodUpdates, List<(string Name, float Mass)> leaderboard, Dictionary<uint, uint> groupOf)
     {
         var seenPlayers = new HashSet<uint>();
         var seenBots = new HashSet<uint>();
@@ -435,10 +471,41 @@ public class GameClient : MonoBehaviour
         RemoveMissing(saws, seenSaws);
 
         ApplyFoodUpdates(foodUpdates);
+        UpdateOwnPieces(groupOf);
 
         if (players.TryGetValue(myEntityId, out var mine) && mine.playerHud != null)
         {
             mine.playerHud.SetLeaderboard(leaderboard);
+        }
+    }
+
+    // After a split the local player owns several PlayerBlobs, but only the primary (myEntityId) is
+    // "mine" - the rest look like remote players. The server tells us which entities belong to whom,
+    // so the primary can frame the camera on ALL of them and the HUD can show the total score.
+    private void UpdateOwnPieces(Dictionary<uint, uint> groupOf)
+    {
+        if (!players.TryGetValue(myEntityId, out var mine))
+        {
+            return;
+        }
+
+        ownPieces.Clear();
+        float totalMass = 0f;
+        foreach (var kv in players)
+        {
+            bool isMine = kv.Key == myEntityId || (groupOf.TryGetValue(kv.Key, out var owner) && owner == myEntityId);
+            if (!isMine)
+            {
+                continue;
+            }
+            ownPieces.Add(kv.Value);
+            totalMass += kv.Value.currentMass;
+        }
+
+        mine.SetOwnPieces(ownPieces);
+        if (ownPieces.Count > 1 && mine.playerHud != null)
+        {
+            mine.playerHud.setScoreCounterText(totalMass);
         }
     }
 

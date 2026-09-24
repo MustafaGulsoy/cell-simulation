@@ -42,6 +42,22 @@ public class PlayerBlob : MonoBehaviour
     public Color currentColor;
     private bool colorInitialized;
     private float currentScale = -1f;
+    public float currentMass;
+
+    // The server's scale changes in steps (eating a pellet, a merge handing mass over, a split
+    // halving it). Snapping the transform to each step reads as a pop; this eases the DRAWN scale
+    // toward the reported one every frame instead. currentScale stays the true network value that
+    // the pop detection / sorting / camera logic below keys off.
+    private const float ScaleSmoothingRate = 14f;
+    private float displayScale = -1f;
+
+    // Camera framing: the follow target is a runtime object placed at the centre of ALL this
+    // player's pieces (not just the primary one), and the zoom widens enough to keep them all in
+    // view. See UpdateCameraFocus.
+    private const float CAMERA_GROUP_MARGIN = 1.4f;
+    private Transform cameraFocus;
+    private float groupExtent;
+    private readonly System.Collections.Generic.List<PlayerBlob> ownPieces = new System.Collections.Generic.List<PlayerBlob>();
 
     // Position arrives from the server at the 30Hz tick rate, not every render frame - snapping
     // straight to it (as this used to) means the object sits still for ~33ms then teleports, which
@@ -110,6 +126,8 @@ public class PlayerBlob : MonoBehaviour
             colorInitialized = true;
         }
 
+        currentMass = mass;
+
         if (!Mathf.Approximately(currentScale, scale))
         {
             // A same-tick drop of >15% only happens from a split/virus/saw pop, never from normal
@@ -118,6 +136,7 @@ public class PlayerBlob : MonoBehaviour
             bool poppedSmaller = currentScale > 0f && scale < currentScale * 0.85f;
 
             currentScale = scale;
+            if (displayScale < 0f) displayScale = scale; // first sighting: nothing to ease from
             ApplyCombinedScale();
             UpdateOrderLayer((int)scale);
             UpdateOrthographicSize(scale);
@@ -134,6 +153,12 @@ public class PlayerBlob : MonoBehaviour
 
     private void Update()
     {
+        if (displayScale >= 0f && !Mathf.Approximately(displayScale, currentScale))
+        {
+            displayScale = Mathf.Lerp(displayScale, currentScale, 1f - Mathf.Exp(-ScaleSmoothingRate * Time.deltaTime));
+            ApplyCombinedScale();
+        }
+
         if (!hasTargetPosition)
         {
             return;
@@ -149,21 +174,82 @@ public class PlayerBlob : MonoBehaviour
             return;
         }
 
-        if (virtualCamera.m_Follow != transform)
+        UpdateCameraFocus();
+
+        // Zoom for the primary piece's size, but never tighter than the whole group needs.
+        float targetSize = Mathf.Max(nextOrthographicSize, Mathf.Min(groupExtent * CAMERA_GROUP_MARGIN, Map.orthographicSpectatingSize));
+        if (virtualCamera.m_Lens.OrthographicSize != targetSize)
         {
-            virtualCamera.m_Follow = transform;
+            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, targetSize, 3f * Time.deltaTime);
+        }
+    }
+
+    /// <summary>GameClient hands the primary blob the list of every PlayerBlob this player owns
+    /// (itself included) each snapshot.</summary>
+    public void SetOwnPieces(System.Collections.Generic.List<PlayerBlob> pieces)
+    {
+        ownPieces.Clear();
+        ownPieces.AddRange(pieces);
+    }
+
+    // Follow the size-weighted centre of all own pieces, and remember how far the outermost one
+    // reaches from it so LateUpdate can zoom out to fit. With a single piece this is exactly the
+    // old behaviour (focus == this transform, extent 0).
+    private void UpdateCameraFocus()
+    {
+        if (cameraFocus == null)
+        {
+            cameraFocus = new GameObject("CameraFocus").transform;
         }
 
-        if (virtualCamera.m_Lens.OrthographicSize != nextOrthographicSize)
+        Vector3 own = transform.position;
+        Vector2 centre = own;
+        float extent = 0f;
+
+        if (ownPieces.Count > 1)
         {
-            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, nextOrthographicSize, 3f * Time.deltaTime);
+            Vector2 weighted = Vector2.zero;
+            float totalWeight = 0f;
+            foreach (var piece in ownPieces)
+            {
+                if (piece == null) continue;
+                float weight = Mathf.Max(1f, piece.currentScale * piece.currentScale);
+                weighted += (Vector2)piece.transform.position * weight;
+                totalWeight += weight;
+            }
+
+            if (totalWeight > 0f)
+            {
+                centre = weighted / totalWeight;
+                foreach (var piece in ownPieces)
+                {
+                    if (piece == null) continue;
+                    extent = Mathf.Max(extent, Vector2.Distance(centre, piece.transform.position) + piece.currentScale * 0.5f);
+                }
+            }
+        }
+
+        groupExtent = extent;
+        cameraFocus.position = new Vector3(centre.x, centre.y, own.z);
+
+        if (virtualCamera.m_Follow != cameraFocus)
+        {
+            virtualCamera.m_Follow = cameraFocus;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (cameraFocus != null)
+        {
+            Destroy(cameraFocus.gameObject);
         }
     }
 
     private void ApplyCombinedScale()
     {
-        if (currentScale < 0f) return; // Init's pop plays before the first ApplyState sets a real scale
-        float s = currentScale * punchScale;
+        if (displayScale < 0f) return; // Init's pop plays before the first ApplyState sets a real scale
+        float s = displayScale * punchScale;
         transform.localScale = new Vector3(s, s, 1f);
     }
 

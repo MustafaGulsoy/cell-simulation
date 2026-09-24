@@ -43,7 +43,16 @@ public sealed class UdpServerService : BackgroundService
                 continue;
             }
 
-            HandlePacket(result.Buffer, result.RemoteEndPoint);
+            // One bad packet (or a failed send to a vanished peer) must never take the whole
+            // listener down - an unhandled exception here stops the host for every room.
+            try
+            {
+                HandlePacket(result.Buffer, result.RemoteEndPoint);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Dropped packet from {EndPoint}", result.RemoteEndPoint);
+            }
         }
     }
 
@@ -54,18 +63,19 @@ public sealed class UdpServerService : BackgroundService
         switch (type)
         {
             case ClientMsg.Join:
+                // The client retries Join until it sees Welcome (UDP can drop either packet), so a
+                // repeat from an endpoint that already has a session just gets Welcome + food
+                // again - creating another player here would leave an orphan behind.
+                if (_rooms.TryGetRoom(from, out var joinedRoom) && joinedRoom.Sessions.TryGetValue(from, out var joinedId))
+                {
+                    SendWelcome(joinedRoom, joinedId, from);
+                    break;
+                }
+
                 var room = _rooms.JoinOrCreateRoom(from, join.MapSize);
                 var player = room.World.AddPlayer(join.Username, from);
                 room.Sessions[from] = player.Id;
-                var welcome = Protocol.EncodeWelcome(player.Id, room.World.HalfMapSize);
-                Socket.Send(welcome, welcome.Length, from);
-
-                const int chunkSize = 100;
-                foreach (var chunk in room.World.AllFood().Chunk(chunkSize))
-                {
-                    var packet = Protocol.EncodeFoodChunk(chunk);
-                    Socket.Send(packet, packet.Length, from);
-                }
+                SendWelcome(room, player.Id, from);
 
                 _logger.LogInformation("Player {Name} joined room {RoomId} as {Id} from {EndPoint}",
                     player.Name, room.Id, player.Id, from);
@@ -108,6 +118,34 @@ public sealed class UdpServerService : BackgroundService
                 }
                 break;
         }
+    }
+
+    private void SendWelcome(Room room, uint playerId, IPEndPoint to)
+    {
+        var welcome = Protocol.EncodeWelcome(playerId, (int)MathF.Ceiling(room.World.HalfWidth), (int)MathF.Ceiling(room.World.HalfHeight));
+        Socket.Send(welcome, welcome.Length, to);
+
+        // A big map means ~100+ food chunks (~120 KB). Fired back-to-back that overruns a client's UDP
+        // receive buffer (64 KB by default on Windows) and the overflow is silently lost - and food
+        // positions are never re-sent, so those pellets would be missing for the whole session.
+        // Pacing them out costs the client well under a second.
+        const int chunkSize = 100;
+        var chunks = room.World.AllFood().Chunk(chunkSize).Select(c => Protocol.EncodeFoodChunk(c)).ToList();
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                for (int i = 0; i < chunks.Count; i++)
+                {
+                    Socket.Send(chunks[i], chunks[i].Length, to);
+                    if (i % 6 == 5) await Task.Delay(2);
+                }
+            }
+            catch (Exception ex) when (ex is SocketException or ObjectDisposedException)
+            {
+                // peer gone or server stopping - nothing left to send to
+            }
+        });
     }
 
     public override async Task StopAsync(CancellationToken cancellationToken)

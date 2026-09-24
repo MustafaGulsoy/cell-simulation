@@ -1,8 +1,8 @@
 namespace CellSimulator.Server.Game;
 
 /// <summary>Static hazard: any player or bot bigger than it that touches it gets forced-split
-/// into a few unevenly-sized pieces (GameWorld.ResolveSawCollisions), unlike the virus (equal
-/// split, players only). Feeding it ejected mass (GameWorld.ResolveSawFeeding) periodically
+/// (GameWorld.ResolveHazardCollisions - the same deterministic rule as the virus, just a much
+/// smaller trigger size). Feeding it ejected mass (GameWorld.ResolveSawFeeding) periodically
 /// launches a new saw in the direction that feed came from.</summary>
 public sealed class SawEntity : Entity
 {

@@ -16,6 +16,15 @@ public sealed class PlayerEntity : Entity
     public uint GroupId;
     public DateTime MergeEligibleUtc = DateTime.MinValue;
 
+    // Merge animation (GameWorld.ResolveMerges/AdvanceAbsorptions): while AbsorbInto is set this
+    // piece is gliding into that sibling and handing its mass over; it takes no part in anything
+    // else (eating, collisions, steering) until it's gone.
+    public PlayerEntity? AbsorbInto;
+    public Vector2 AbsorbStart;
+    public float AbsorbElapsed;
+    public float AbsorbMassTotal;
+    public float AbsorbMassMoved;
+
     public PlayerEntity()
     {
         Type = EntityType.Player;

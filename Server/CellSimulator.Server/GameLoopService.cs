@@ -33,28 +33,47 @@ public sealed class GameLoopService : BackgroundService
         using var timer = new PeriodicTimer(period);
         while (await timer.WaitForNextTickAsync(stoppingToken))
         {
-            _rooms.Tick(dt, StaleTimeout);
-            tick++;
-
-            foreach (var room in _rooms.Rooms)
+            // A bug in one tick must cost one frame, not the whole process (an unhandled exception
+            // in a BackgroundService stops the host, dropping every room).
+            try
             {
-                Broadcast(room, tick);
+                _rooms.Tick(dt, StaleTimeout);
+                tick++;
+
+                foreach (var room in _rooms.Rooms)
+                {
+                    Broadcast(room, tick, dt);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Game loop iteration failed");
             }
         }
     }
 
-    private void Broadcast(Room room, uint tick)
+    private void Broadcast(Room room, uint tick, float dt)
     {
         if (room.Sessions.IsEmpty) return;
 
         var changedFood = room.World.DrainChangedFood();
         var leaderboard = room.World.GetLeaderboard();
-        var packet = Protocol.EncodeSnapshot(tick, room.World.Players, room.World.Bots, room.World.Viruses, room.World.Saws, changedFood, leaderboard);
 
-        foreach (var endPoint in room.Sessions.Keys)
+        var everything = new List<Entity>();
+        everything.AddRange(room.World.Players);
+        everything.AddRange(room.World.Bots);
+        everything.AddRange(room.World.Viruses);
+        everything.AddRange(room.World.Saws);
+
+        // Each viewer gets its own snapshot (only what its camera can see, within one network
+        // packet) - see InterestManager for why the whole room can't be sent to everyone anymore.
+        foreach (var (endPoint, sessionId) in room.Sessions)
         {
             try
             {
+                float zoom = room.ViewZoom.GetValueOrDefault(endPoint);
+                var packet = InterestManager.Encode(tick, sessionId, everything, changedFood, leaderboard, ref zoom, dt);
+                room.ViewZoom[endPoint] = zoom;
                 _udp.Socket.Send(packet, packet.Length, endPoint);
             }
             catch (SocketException)

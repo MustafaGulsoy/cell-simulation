@@ -71,6 +71,7 @@ public sealed class RoomManager
                     if (!stale.Equals(default(KeyValuePair<IPEndPoint, uint>)))
                     {
                         room.Sessions.TryRemove(stale.Key, out _);
+                        room.ViewZoom.TryRemove(stale.Key, out _);
                         _roomByEndpoint.TryRemove(stale.Key, out _);
                     }
                 }

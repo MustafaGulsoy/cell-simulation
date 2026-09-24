@@ -22,6 +22,9 @@ public class AIBlob : MonoBehaviour
     // get exactly the same "just been split/popped" treatment since virus/saw hazards affect them
     // just as much as players.
     private const float PositionSmoothingRate = 20f;
+    // Drawn scale eases toward the server's reported scale instead of snapping to each step.
+    private const float ScaleSmoothingRate = 14f;
+    private float displayScale = -1f;
     private Vector2 targetPosition;
     private bool hasTargetPosition;
     private float punchScale = 1f;
@@ -59,6 +62,7 @@ public class AIBlob : MonoBehaviour
             bool poppedSmaller = currentScale > 0f && scale < currentScale * 0.85f;
 
             currentScale = scale;
+            if (displayScale < 0f) displayScale = scale;
             ApplyCombinedScale();
             UpdateOrderLayer((int)scale);
 
@@ -70,14 +74,20 @@ public class AIBlob : MonoBehaviour
 
     private void Update()
     {
+        if (displayScale >= 0f && !Mathf.Approximately(displayScale, currentScale))
+        {
+            displayScale = Mathf.Lerp(displayScale, currentScale, 1f - Mathf.Exp(-ScaleSmoothingRate * Time.deltaTime));
+            ApplyCombinedScale();
+        }
+
         if (!hasTargetPosition) return;
         transform.position = Vector2.Lerp(transform.position, targetPosition, 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
     }
 
     private void ApplyCombinedScale()
     {
-        if (currentScale < 0f) return;
-        float s = currentScale * punchScale;
+        if (displayScale < 0f) return;
+        float s = displayScale * punchScale;
         transform.localScale = new Vector3(s, s, 1f);
     }
 

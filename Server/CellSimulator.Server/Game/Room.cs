@@ -14,6 +14,9 @@ public sealed class Room
     public GameWorld World { get; }
     public ConcurrentDictionary<IPEndPoint, uint> Sessions { get; } = new();
 
+    /// <summary>Per-session smoothed camera zoom, used by Net/InterestManager to decide how far around a player to send.</summary>
+    public ConcurrentDictionary<IPEndPoint, float> ViewZoom { get; } = new();
+
     public Room(MapSize mapSize)
     {
         World = new GameWorld(mapSize);

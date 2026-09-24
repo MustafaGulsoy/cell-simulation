@@ -73,10 +73,7 @@ public static class AiBrain
         bot.ThreatId = null;
         if (Vector2.Distance(bot.Position, bot.RoamTarget) < RoamArriveDist)
         {
-            float half = world.HalfMapSize;
-            bot.RoamTarget = new Vector2(
-                (float)(rng.NextDouble() * 2 - 1) * half,
-                (float)(rng.NextDouble() * 2 - 1) * half);
+            bot.RoamTarget = world.RandomPoint(rng);
         }
         bot.MoveDirection = SafeDirection(bot.RoamTarget - bot.Position);
     }

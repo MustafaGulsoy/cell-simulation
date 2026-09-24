@@ -4,6 +4,12 @@ using CellSimulator.Server.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// Gameplay tuning (split/merge/speed/spikes/map size) - see GameConfig. Override any value from
+// appsettings.json's "Game" section or an env var such as Game__SplitForce=1.3; no rebuild needed.
+var gameConfig = new GameConfig();
+builder.Configuration.GetSection("Game").Bind(gameConfig);
+GameConfig.Use(gameConfig);
+
 var mapSizeName = builder.Configuration.GetValue("Server:MapSize", "Small")!;
 var mapSize = Enum.Parse<MapSize>(mapSizeName, ignoreCase: true);
 
@@ -26,6 +32,8 @@ app.MapGet("/stats", (RoomManager rooms) => rooms.Rooms.Select(r => new
     saws = r.World.Saws.Count,
     food = r.World.AllFood().Count,
     halfMapSize = r.World.HalfMapSize,
+    halfWidth = r.World.HalfWidth,
+    halfHeight = r.World.HalfHeight,
     mapSize = r.World.Size.ToString(),
 }));
 
