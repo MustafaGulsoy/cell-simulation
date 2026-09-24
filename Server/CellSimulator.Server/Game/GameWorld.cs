@@ -1420,6 +1420,22 @@ public sealed class GameWorld
         lock (_gate) { return _food.Values.ToArray(); }
     }
 
+    /// <summary>A window of the food list (wrapping around) - used to slowly re-send every pellet's position
+    /// to every client, so a pellet update lost on the network heals itself instead of staying wrong for the whole session.</summary>
+    public List<FoodItem> GetFoodSlice(int start, int count)
+    {
+        lock (_gate)
+        {
+            var slice = new List<FoodItem>(count);
+            if (_foodList.Count == 0) return slice;
+            for (int i = 0; i < count && i < _foodList.Count; i++)
+            {
+                slice.Add(_foodList[(start + i) % _foodList.Count]);
+            }
+            return slice;
+        }
+    }
+
     public List<FoodItem> DrainChangedFood()
     {
         lock (_gate)

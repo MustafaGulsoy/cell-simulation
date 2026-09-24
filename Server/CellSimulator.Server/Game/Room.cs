@@ -40,6 +40,9 @@ public sealed class SessionState
     /// resend those every so often - see SnapshotV2).</summary>
     public Dictionary<uint, uint> LastFullInfoTick { get; } = new();
 
+    /// <summary>Where this client's rolling food refresh is up to (see GameLoopService.FoodRefreshPerTick).</summary>
+    public int FoodCursor;
+
     /// <summary>Tick of the last leaderboard sent (compact snapshots send it at a lower rate).</summary>
     public uint LastLeaderboardTick;
 }

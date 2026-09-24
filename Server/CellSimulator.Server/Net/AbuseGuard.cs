@@ -25,6 +25,11 @@ public sealed class AbuseGuard
 
     private readonly ConcurrentDictionary<IPEndPoint, Bucket> _packets = new();
     private readonly ConcurrentDictionary<IPAddress, Queue<DateTime>> _joins = new();
+    private readonly ConcurrentDictionary<IPAddress, Queue<DateTime>> _queries = new();
+
+    /// <summary>Leaderboard lookups per address per minute. A 2-byte request earns a few-hundred-byte
+    /// answer, so without a cap a spoofed source address could be used to reflect traffic at a victim.</summary>
+    public int QueriesPerMinutePerIp { get; init; } = 30;
 
     public AbuseGuard(int maxPacketBytes = 512, int packetsPerSecond = 200, int joinsPerMinutePerIp = 20, int maxSessionsPerIp = 30)
     {
@@ -66,6 +71,18 @@ public sealed class AbuseGuard
         }
     }
 
+    public bool AllowQuery(IPAddress ip, DateTime now)
+    {
+        var recent = _queries.GetOrAdd(ip, _ => new Queue<DateTime>());
+        lock (recent)
+        {
+            while (recent.Count > 0 && now - recent.Peek() > TimeSpan.FromMinutes(1)) recent.Dequeue();
+            if (recent.Count >= QueriesPerMinutePerIp) return false;
+            recent.Enqueue(now);
+            return true;
+        }
+    }
+
     /// <summary>Drops bookkeeping for sources that went quiet, so the tables can't grow forever.</summary>
     public void Prune(DateTime now)
     {
@@ -82,6 +99,14 @@ public sealed class AbuseGuard
             lock (recent)
             {
                 if (recent.Count == 0 || now - recent.Peek() > TimeSpan.FromMinutes(1)) _joins.TryRemove(ip, out _);
+            }
+        }
+
+        foreach (var (ip, recent) in _queries)
+        {
+            lock (recent)
+            {
+                if (recent.Count == 0 || now - recent.Peek() > TimeSpan.FromMinutes(1)) _queries.TryRemove(ip, out _);
             }
         }
     }

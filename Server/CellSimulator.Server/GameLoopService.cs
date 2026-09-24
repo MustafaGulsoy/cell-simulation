@@ -15,6 +15,11 @@ public sealed class GameLoopService : BackgroundService
     private static readonly TimeSpan StaleTimeout = TimeSpan.FromSeconds(10);
 
     // An iteration over budget is worth a log line, but not one per tick when the box is struggling.
+    // Food positions are only sent when they change, and UDP drops packets - so every snapshot also
+    // carries a few pellets in rotation (a full lap of a 10,000-pellet map takes ~85 s). Anything a
+    // client missed (part of the initial food dump, an eaten-and-respawned pellet) is corrected within a lap.
+    private const int FoodRefreshPerTick = 4;
+
     private const double SlowTickWarnMs = 40;
     private static readonly TimeSpan SlowTickLogEvery = TimeSpan.FromSeconds(10);
 
@@ -92,7 +97,12 @@ public sealed class GameLoopService : BackgroundService
             try
             {
                 var state = room.State.GetOrAdd(endPoint, _ => new SessionState());
-                var packet = InterestManager.EncodeFor(tick, sessionId, state, everything, changedFood, leaderboard,
+
+                var food = new List<FoodItem>(changedFood);
+                food.AddRange(room.World.GetFoodSlice(state.FoodCursor, FoodRefreshPerTick));
+                state.FoodCursor = (state.FoodCursor + FoodRefreshPerTick) % Math.Max(1, room.World.FoodCount);
+
+                var packet = InterestManager.EncodeFor(tick, sessionId, state, everything, food, leaderboard,
                     room.World.HalfWidth, room.World.HalfHeight, dt);
                 _udp.Socket.Send(packet, packet.Length, endPoint);
                 ServerMetrics.PacketOut(packet.Length);

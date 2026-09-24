@@ -14,14 +14,16 @@ public sealed class UdpServerService : BackgroundService
     private readonly ILogger<UdpServerService> _logger;
     private readonly int _port;
     private readonly AbuseGuard _guard;
+    private readonly LeaderboardStore? _leaderboard;
     private DateTime _lastPrune = DateTime.UtcNow;
 
     public UdpClient Socket { get; }
 
-    public UdpServerService(RoomManager rooms, ILogger<UdpServerService> logger, IConfiguration config)
+    public UdpServerService(RoomManager rooms, ILogger<UdpServerService> logger, IConfiguration config, LeaderboardStore? leaderboard = null)
     {
         _rooms = rooms;
         _logger = logger;
+        _leaderboard = leaderboard;
         _port = config.GetValue("Server:UdpPort", 7778);
         _guard = new AbuseGuard(
             config.GetValue("Server:MaxPacketBytes", 512),
@@ -116,6 +118,17 @@ public sealed class UdpServerService : BackgroundService
                 pong[0] = (byte)ServerMsg.Pong;
                 Buffer.BlockCopy(data, 1, pong, 1, 4);
                 Socket.Send(pong, pong.Length, from);
+                break;
+            }
+
+            case ClientMsg.Top:
+            {
+                if (_leaderboard == null || !_guard.AllowQuery(from.Address, DateTime.UtcNow)) break;
+                byte period = Math.Min(data[1], (byte)2);
+                var window = period switch { 0 => TimeSpan.FromDays(1), 1 => TimeSpan.FromDays(7), _ => (TimeSpan?)null };
+                var list = Protocol.EncodeTopList(period, _leaderboard.Top(window, 10));
+                Socket.Send(list, list.Length, from);
+                ServerMetrics.PacketOut(list.Length);
                 break;
             }
 

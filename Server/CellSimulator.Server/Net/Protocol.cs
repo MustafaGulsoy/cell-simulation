@@ -13,6 +13,8 @@ public enum ClientMsg : byte
     Emoji = 5,
     /// <summary>[6][u32 client timestamp] - echoed back as Pong so the client can show its ping.</summary>
     Ping = 6,
+    /// <summary>[7][period byte: 0 day, 1 week, 2 all-time] - asks for the persistent leaderboard.</summary>
+    Top = 7,
 }
 
 public enum ServerMsg : byte
@@ -26,6 +28,8 @@ public enum ServerMsg : byte
     /// <summary>Compact snapshot for clients that announced version >= 2 (see SnapshotV2).</summary>
     SnapshotV2 = 6,
     Pong = 7,
+    /// <summary>[8][period][count][name, mass f32, seconds survived f32]... - the answer to ClientMsg.Top.</summary>
+    TopList = 8,
 }
 
 /// <summary>Tiny binary protocol - no NGO, no reflection, just BinaryReader/Writer over UDP payloads.</summary>
@@ -125,6 +129,23 @@ public static class Protocol
         w.Write((ushort)Math.Min(death.FoodEaten, ushort.MaxValue));
         w.Write((ushort)Math.Min(death.BlobsEaten, ushort.MaxValue));
         w.Write((ushort)Math.Min(death.SpikesHit, ushort.MaxValue));
+        return ms.ToArray();
+    }
+
+    public static byte[] EncodeTopList(byte period, IReadOnlyList<LeaderboardStore.Entry> entries)
+    {
+        using var ms = new MemoryStream();
+        using var w = new BinaryWriter(ms);
+        w.Write((byte)ServerMsg.TopList);
+        w.Write(period);
+        int count = Math.Min(entries.Count, 10);
+        w.Write((byte)count);
+        for (int i = 0; i < count; i++)
+        {
+            WriteString(w, entries[i].Name);
+            w.Write(entries[i].Mass);
+            w.Write(entries[i].SurvivedSeconds);
+        }
         return ms.ToArray();
     }
 
@@ -360,6 +381,8 @@ public static class Protocol
                     return true;
                 case ClientMsg.Ping:
                     return data.Length >= 5; // the 4-byte timestamp is echoed straight from the raw packet
+                case ClientMsg.Top:
+                    return data.Length >= 2;
                 case ClientMsg.Emoji:
                     emoji = new EmojiMsg(r.ReadByte());
                     return true;

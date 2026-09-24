@@ -15,6 +15,7 @@ public class ProtocolIntegrationTests : IAsyncLifetime
     private RoomManager _rooms = null!;
     private UdpServerService _udp = null!;
     private GameLoopService _loop = null!;
+    private readonly LeaderboardStore _store = new();
     private IPEndPoint _server = null!;
     private readonly List<UdpClient> _clients = new();
 
@@ -24,8 +25,8 @@ public class ProtocolIntegrationTests : IAsyncLifetime
             .AddInMemoryCollection(new Dictionary<string, string?> { ["Server:UdpPort"] = "0" })
             .Build();
         _rooms = new RoomManager(MapSize.Small);
-        _udp = new UdpServerService(_rooms, NullLogger<UdpServerService>.Instance, config);
-        _loop = new GameLoopService(_rooms, _udp, NullLogger<GameLoopService>.Instance, new LeaderboardStore());
+        _udp = new UdpServerService(_rooms, NullLogger<UdpServerService>.Instance, config, _store);
+        _loop = new GameLoopService(_rooms, _udp, NullLogger<GameLoopService>.Instance, _store);
         await _udp.StartAsync(CancellationToken.None);
         await _loop.StartAsync(CancellationToken.None);
         _server = new IPEndPoint(IPAddress.Loopback, ((IPEndPoint)_udp.Socket.Client.LocalEndPoint!).Port);
@@ -140,6 +141,68 @@ public class ProtocolIntegrationTests : IAsyncLifetime
             if (d[0] == (byte)ServerMsg.Died) diedForLegacy++;
         }
         Assert.Equal(0, diedForLegacy);
+    }
+
+    [Fact]
+    public async Task FoodTheClientNeverReceivedOnJoin_HealsThroughTheRollingRefresh()
+    {
+        // Tiny map => ~400 pellets, so a full refresh lap takes ~3 seconds instead of ~85.
+        GameConfig.Use(new GameConfig { MapWidth = 200f, MapHeight = 200f });
+        try
+        {
+            var (client, id) = await JoinAsync("Hungry", 2, 10, 20, 30);
+            var world = _rooms.Rooms.Single().World;
+            var decoder = new SnapshotDecoder { HalfWidth = world.HalfWidth, HalfHeight = world.HalfHeight };
+
+            // This client "lost" every FoodFull chunk (it never looks at them) and only reads snapshots.
+            var seen = new HashSet<uint>();
+            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(6));
+            while (seen.Count < world.FoodCount)
+            {
+                var d = (await client.ReceiveAsync(cts.Token)).Buffer;
+                if (!SnapshotDecoder.IsSnapshot(d[0])) continue;
+                foreach (var f in decoder.Decode(d).Food) seen.Add(f.Id);
+            }
+
+            Assert.Equal(world.FoodCount, seen.Count);
+        }
+        finally { GameConfig.Use(new GameConfig()); }
+    }
+
+    [Fact]
+    public async Task LeaderboardCanBeQueriedOverUdpWithoutJoining_ButNotSpammed()
+    {
+        _store.Record("Ada", 900, 120);
+        _store.Record("Bob", 400, 60);
+        var client = NewClient();
+
+        await client.SendAsync(new byte[] { (byte)ClientMsg.Top, 2 }, 2, _server);
+        var reply = await ReceiveAsync(client, d => d[0] == (byte)ServerMsg.TopList);
+
+        using var r = new BinaryReader(new MemoryStream(reply, 1, reply.Length - 1));
+        Assert.Equal(2, r.ReadByte());          // period echoed: all-time
+        int count = r.ReadByte();
+        Assert.Equal(2, count);
+        var names = new List<(string, float)>();
+        for (int i = 0; i < count; i++)
+        {
+            string name = System.Text.Encoding.UTF8.GetString(r.ReadBytes(r.ReadByte()));
+            float mass = r.ReadSingle();
+            r.ReadSingle();
+            names.Add((name, mass));
+        }
+        Assert.Equal(("Ada", 900f), names[0]);
+        Assert.Equal(("Bob", 400f), names[1]);
+
+        // 2-byte request, ~30-byte answer: capped per address so nobody can bounce traffic off us.
+        int answered = 0;
+        for (int i = 0; i < 100; i++) await client.SendAsync(new byte[] { (byte)ClientMsg.Top, 2 }, 2, _server);
+        await Task.Delay(500);
+        while (client.Available > 0)
+        {
+            if ((await client.ReceiveAsync()).Buffer[0] == (byte)ServerMsg.TopList) answered++;
+        }
+        Assert.InRange(answered, 1, 35);
     }
 
     [Fact]
