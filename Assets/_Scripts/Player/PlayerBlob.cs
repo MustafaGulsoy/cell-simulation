@@ -343,33 +343,56 @@ public class PlayerBlob : MonoBehaviour
     /// small bubble above the blob for a couple seconds, then hides itself again.</summary>
     public void ShowEmoji(byte emojiId)
     {
-        if (emojiBubble == null)
+        // A drawn face (ProceduralSprites.Emoji) instead of the text bubble ":)" / "haha" / ">:(".
+        if (emojiFace == null)
         {
-            return;
+            var go = new GameObject("EmojiFace");
+            go.transform.SetParent(transform, false);
+            emojiFace = go.AddComponent<SpriteRenderer>();
+            emojiFace.sortingOrder = 40;
+            if (emojiBubble != null) emojiBubble.gameObject.SetActive(false);
         }
 
-        emojiBubble.SetText(EmojiGlyph(emojiId));
-        emojiBubble.gameObject.SetActive(true);
+        emojiFace.sprite = ProceduralSprites.Emoji(emojiId);
+        emojiFace.gameObject.SetActive(true);
 
         if (emojiHideCoroutine != null) StopCoroutine(emojiHideCoroutine);
-        emojiHideCoroutine = StartCoroutine(HideEmojiAfterDelay());
+        emojiHideCoroutine = StartCoroutine(EmojiRoutine());
     }
 
-    private IEnumerator HideEmojiAfterDelay()
+    // Pops in above the blob, floats up a little, then disappears.
+    private IEnumerator EmojiRoutine()
     {
-        yield return new WaitForSeconds(EMOJI_BUBBLE_DURATION);
-        emojiBubble.gameObject.SetActive(false);
+        float t = 0f;
+        while (t < EMOJI_BUBBLE_DURATION)
+        {
+            float pop = Mathf.Clamp01(t / 0.2f);
+            float overshoot = 1f + 0.25f * Mathf.Sin(pop * Mathf.PI);
+            emojiFace.transform.localScale = Vector3.one * (0.55f * pop * overshoot);
+            emojiFace.transform.localPosition = new Vector3(0f, 0.85f + 0.08f * Mathf.Clamp01(t / EMOJI_BUBBLE_DURATION), 0f);
+            t += Time.deltaTime;
+            yield return null;
+        }
+        emojiFace.gameObject.SetActive(false);
         emojiHideCoroutine = null;
     }
 
-    private static string EmojiGlyph(byte emojiId)
+    private SpriteRenderer emojiFace;
+    private SpriteRenderer ownOutline;
+
+    /// <summary>White-and-black outline around the local player's cells (every piece after a split).</summary>
+    public void SetOutline(bool on)
     {
-        switch (emojiId)
+        if (ownOutline == null)
         {
-            case 1: return ":)";
-            case 2: return "haha";
-            case 3: return ">:(";
-            default: return "?";
+            if (!on) return;
+            var go = new GameObject("OwnOutline");
+            go.transform.SetParent(transform, false);
+            go.transform.localScale = Vector3.one * ProceduralSprites.OutlineScale;
+            ownOutline = go.AddComponent<SpriteRenderer>();
+            ownOutline.sprite = ProceduralSprites.Outline();
+            ownOutline.sortingOrder = 19;   // above the body, under the effect glow
         }
+        if (ownOutline.enabled != on) ownOutline.enabled = on;
     }
 }

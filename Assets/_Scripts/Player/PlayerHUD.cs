@@ -49,9 +49,15 @@ public class PlayerHUD : MonoBehaviour
 
     private void Awake()
     {
+        // The top-left button used to drop straight to the main menu; it now opens the pause menu
+        // (Resume / Main menu, see HudExtras).
         mainMenuButton.onClick.AddListener(() => {
-            SceneManager.LoadScene("Main Menu", LoadSceneMode.Single);
+            if (GameClient.instance != null) GameClient.instance.TogglePause();
+            else SceneManager.LoadScene("Main Menu", LoadSceneMode.Single);
         });
+
+        PlaceQuests();
+        UseEmojiFaces();
 
         leaderboardSlots = new[] { leaderboardFirst, leaderboardSecond, leaderboardThird, leaderboardFourth, leaderboardFifth };
 
@@ -64,6 +70,47 @@ public class PlayerHUD : MonoBehaviour
         if (emojiButton1 != null) emojiButton1.onClick.AddListener(() => GameClient.instance?.SendEmoji(1));
         if (emojiButton2 != null) emojiButton2.onClick.AddListener(() => GameClient.instance?.SendEmoji(2));
         if (emojiButton3 != null) emojiButton3.onClick.AddListener(() => GameClient.instance?.SendEmoji(3));
+    }
+
+    // Daily quests: left edge, vertically centred (they sat under the score and got in the way of the
+    // top-left buttons).
+    private void PlaceQuests()
+    {
+        var panel = dailyPanelText != null ? dailyPanelText.transform.parent as RectTransform : null;
+        if (panel == null) return;
+
+        panel.anchorMin = panel.anchorMax = new Vector2(0f, 0.5f);
+        panel.pivot = new Vector2(0f, 0.5f);
+        panel.anchoredPosition = new Vector2(12f, 0f);
+        panel.sizeDelta = new Vector2(440f, 130f);
+    }
+
+    // The three emote buttons showed ":)" / "haha" / ">:(" as text and, worse, the labels didn't match
+    // what was sent. Each button now shows the drawn face of the emote id it actually sends.
+    private void UseEmojiFaces()
+    {
+        var buttons = new[] { emojiButton1, emojiButton2, emojiButton3 };
+        for (int i = 0; i < buttons.Length; i++)
+        {
+            var button = buttons[i];
+            if (button == null) continue;
+
+            foreach (var text in button.GetComponentsInChildren<TextMeshProUGUI>(true))
+            {
+                text.gameObject.SetActive(false);
+            }
+
+            var face = new GameObject("Face", typeof(RectTransform)).AddComponent<Image>();
+            face.sprite = ProceduralSprites.Emoji((byte)(i + 1));
+            face.preserveAspect = true;
+            face.raycastTarget = false;
+            var rt = face.rectTransform;
+            rt.SetParent(button.transform, false);
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = new Vector2(6f, 6f);
+            rt.offsetMax = new Vector2(-6f, -6f);
+        }
     }
 
     public void setIdleCanvasActivity(bool active)
@@ -130,8 +177,42 @@ public class PlayerHUD : MonoBehaviour
         }
     }
 
+    // The score / recombine texts are authored dark (readable on white) and vanished on the dark map.
+    // They are found once (everything under the playing canvas sharing the score counter's colour) and
+    // swapped between their authored colour and the bright HUD colour whenever the theme flips.
+    private readonly List<TextMeshProUGUI> themedTexts = new List<TextMeshProUGUI>();
+    private readonly List<Color> themedLightColors = new List<Color>();
+    private int themedFor = -1; // -1 unknown, 0 light, 1 dark
+
+    private void TintHudText(bool dark)
+    {
+        int state = dark ? 1 : 0;
+        if (state == themedFor || scoreCounter == null || playingCanvas == null) return;
+
+        if (themedTexts.Count == 0)
+        {
+            Color authored = scoreCounter.color;
+            foreach (var text in playingCanvas.GetComponentsInChildren<TextMeshProUGUI>(true))
+            {
+                if (Mathf.Abs(text.color.r - authored.r) + Mathf.Abs(text.color.g - authored.g) + Mathf.Abs(text.color.b - authored.b) < 0.05f)
+                {
+                    themedTexts.Add(text);
+                    themedLightColors.Add(text.color);
+                }
+            }
+        }
+
+        for (int i = 0; i < themedTexts.Count; i++)
+        {
+            themedTexts[i].color = dark ? Utils.playingHudTextBrightColor : themedLightColors[i];
+        }
+        themedFor = state;
+    }
+
     public void updateJoystickColor()
     {
+        TintHudText(Utils.isColorAlmostBlack(Camera.main.backgroundColor));
+
         if(Utils.isColorAlmostBlack(Camera.main.backgroundColor) && joystickBackground.color != Utils.brightJoystickBackgroundColor)
         {
             joystickBackground.color = Utils.brightJoystickBackgroundColor;
@@ -194,8 +275,8 @@ public class PlayerHUD : MonoBehaviour
         {
             var parent = (RectTransform)matchSummaryPanel.transform;
             // Above the panel: below it are the emoji buttons.
-            var card = RuntimeUi.Panel("ExtraSummary", parent, new Vector2(0.5f, 1f), new Vector2(0.5f, 0f), new Vector2(0f, 8f), new Vector2(parent.rect.width > 10f ? parent.rect.width : 780f, 150f), RuntimeUi.PanelColor);
-            extraSummaryText = RuntimeUi.Label("Text", card.transform, "", 34f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(720f, 140f), TextAlignmentOptions.Center);
+            var card = RuntimeUi.Panel("ExtraSummary", parent, new Vector2(0.5f, 1f), new Vector2(0.5f, 0f), new Vector2(0f, 8f), new Vector2(parent.rect.width > 10f ? parent.rect.width : 780f, 100f), RuntimeUi.PanelColor);
+            extraSummaryText = RuntimeUi.Label("Text", card.transform, "", 28f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(720f, 96f), TextAlignmentOptions.Center);
             extraSummaryCard = card.gameObject;
         }
 

@@ -29,19 +29,58 @@ public class MainMenuHandler : MonoBehaviour
     // actually act on it). Left unassigned, this is simply a no-op like serverIpInput's guard.
     [SerializeField] private Toggle nightModeToggle;
 
-    // Extras built in code (no scene edits): colour picker and the Top players button. Anchors are
-    // screen fractions; nudge these constants to fit the menu layout.
+    // Extras built in code (no scene edits), laid out for the landscape 1280x720 reference: the colour
+    // strip along the bottom (below the centre box), Top players and the theme button in the top-right.
     private static readonly Vector2 SkinAnchor = new Vector2(0.5f, 0f);
-    private static readonly Vector2 SkinOffset = new Vector2(0f, 60f);
-    private static readonly Vector2 TopAnchor = new Vector2(0.5f, 0f);
-    private static readonly Vector2 TopOffset = new Vector2(0f, 300f);
+    private static readonly Vector2 SkinOffset = new Vector2(0f, 14f);
+    private static readonly Vector2 TopAnchor = new Vector2(1f, 1f);
+    private static readonly Vector2 TopOffset = new Vector2(-14f, -14f);
+
+    private Canvas extras;
+    private GameObject mainPage;
+
+    // The extras belong to the main page: hidden while the Profile / Stats pages are open (they used to
+    // float on top of those pages) and back when the main page returns.
+    private void Update()
+    {
+        if (extras != null && mainPage != null && extras.gameObject.activeSelf != mainPage.activeInHierarchy)
+        {
+            extras.gameObject.SetActive(mainPage.activeInHierarchy);
+        }
+    }
+
+    private void BuildThemeButton(Transform parent)
+    {
+        var button = RuntimeUi.ButtonWithLabel("Theme", parent, Theme.Label(Theme.Night), 22f, TopAnchor, new Vector2(1f, 1f), TopOffset + new Vector2(0f, -56f), new Vector2(190f, 46f), new Color(0.15f, 0.2f, 0.34f, 0.92f));
+        var label = button.GetComponentInChildren<TextMeshProUGUI>();
+        button.onClick.AddListener(delegate
+        {
+            label.text = Theme.Label(Theme.Toggle());
+            GameAudio.Play("click");
+        });
+    }
 
     private void Awake() {
         GameAudio.ApplySavedVolume();
 
-        var extras = RuntimeUi.CreateCanvas("MenuExtras", 30);
+        // The Profile / Stats boxes are 650 tall on a 720 reference, so on wide phones they ran off the
+        // top and bottom of the screen; shrink them a little (they are inactive, hence FindObjectsOfTypeAll).
+        foreach (var rect in Resources.FindObjectsOfTypeAll<RectTransform>())
+        {
+            if (rect.name == "Box" && rect.parent != null && (rect.parent.name == "Profile Menu" || rect.parent.name == "Stats Menu") && rect.gameObject.scene.IsValid())
+            {
+                rect.localScale = new Vector3(0.8f, 0.8f, 1f);
+            }
+        }
+
+        // The colour choice starts on "random" every time the menu opens.
+        SkinPicker.ResetToRandom();
+        mainPage = GameObject.Find("Main Menu");
+
+        extras = RuntimeUi.CreateCanvas("MenuExtras", 30);
         SkinPicker.Build(extras.transform, SkinAnchor, new Vector2(0.5f, 0f), SkinOffset);
-        LeaderboardPanel.Create(extras.transform, TopAnchor, new Vector2(0.5f, 0f), TopOffset);
+        LeaderboardPanel.Create(extras.transform, TopAnchor, new Vector2(1f, 1f), TopOffset);
+        BuildThemeButton(extras.transform);
 
         // Server address is fixed - players never see or edit it.
         if(serverIpInput != null)

@@ -8,16 +8,17 @@ using UnityEngine.UI;
 // Positions are constants at the top so they are easy to nudge without hunting through the code.
 public class HudExtras : MonoBehaviour
 {
-    // ---- layout (reference resolution 1080x1920; anchors are screen fractions) ----
+    // ---- layout (reference resolution 1280x720, landscape; anchors are screen fractions) ----
     private static readonly Vector2 PingAnchor = new Vector2(0.5f, 1f);
-    private static readonly Vector2 PingOffset = new Vector2(0f, -28f);
-    private static readonly Vector2 MuteAnchor = new Vector2(0f, 1f);
-    private static readonly Vector2 MuteOffset = new Vector2(24f, -236f);
+    private static readonly Vector2 PingOffset = new Vector2(0f, -14f);
+    // Sound / theme buttons: top-right, in a column just left of the (scene's) leaderboard.
+    private static readonly Vector2 MuteAnchor = new Vector2(1f, 1f);
+    private static readonly Vector2 MuteOffset = new Vector2(-236f, -12f);
     private static readonly Vector2 MapAnchor = new Vector2(0f, 0f);   // bottom-left: the right side has the joystick and buttons
-    private static readonly Vector2 MapOffset = new Vector2(24f, 24f);
-    private const float MapSize = 190f;
+    private static readonly Vector2 MapOffset = new Vector2(12f, 12f);
+    private const float MapSize = 130f;
     private static readonly Vector2 EffectsAnchor = new Vector2(0.5f, 1f);
-    private static readonly Vector2 EffectsOffset = new Vector2(0f, -100f);
+    private static readonly Vector2 EffectsOffset = new Vector2(0f, -60f);
 
     private const string TutorialSeenKey = "tutorialSeen";
     private const int MapTextureSize = 64;
@@ -44,10 +45,10 @@ public class HudExtras : MonoBehaviour
         canvas = RuntimeUi.CreateCanvas("HudExtrasCanvas", 40);
         canvas.transform.SetParent(transform, false);
 
-        pingText = RuntimeUi.Label("Ping", canvas.transform, "", 34f, PingAnchor, new Vector2(0.5f, 1f), PingOffset, new Vector2(300f, 50f), TextAlignmentOptions.Center);
+        pingText = RuntimeUi.Label("Ping", canvas.transform, "", 22f, PingAnchor, new Vector2(0.5f, 1f), PingOffset, new Vector2(200f, 34f), TextAlignmentOptions.Center);
 
-        var bannerImg = RuntimeUi.Panel("ConnectionLost", canvas.transform, new Vector2(0.5f, 0.78f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(880f, 130f), new Color(0.75f, 0.1f, 0.1f, 0.88f));
-        RuntimeUi.Label("Text", bannerImg.transform, "Connection lost - reconnecting...", 44f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(860f, 120f), TextAlignmentOptions.Center);
+        var bannerImg = RuntimeUi.Panel("ConnectionLost", canvas.transform, new Vector2(0.5f, 0.78f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(600f, 88f), new Color(0.75f, 0.1f, 0.1f, 0.88f));
+        RuntimeUi.Label("Text", bannerImg.transform, "Connection lost - reconnecting...", 30f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(580f, 80f), TextAlignmentOptions.Center);
         banner = bannerImg.gameObject;
         banner.SetActive(false);
 
@@ -55,13 +56,63 @@ public class HudExtras : MonoBehaviour
         BuildEffectBadges();
         BuildMap();
         BuildTutorial();
+        BuildPauseMenu();
+    }
+
+    // ---- pause menu ----
+
+    private GameObject pausePanel;
+
+    /// <summary>True while the pause menu is open (GameClient then holds the cell still and drops Split/Eject/Emoji).</summary>
+    public bool Paused { get { return pausePanel != null && pausePanel.activeSelf; } }
+
+    private void BuildPauseMenu()
+    {
+        // Its own canvas, above the scene's HUD canvases, so the dim covers the whole HUD.
+        var pauseCanvas = RuntimeUi.CreateCanvas("PauseCanvas", 500);
+        pauseCanvas.transform.SetParent(transform, false);
+        var dim = RuntimeUi.Panel("Pause", pauseCanvas.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(4000f, 4000f), new Color(0f, 0f, 0f, 0.6f));
+        dim.raycastTarget = true; // swallows taps so nothing underneath (split, eject, joystick) is hit
+        pausePanel = dim.gameObject;
+
+        var card = RuntimeUi.Panel("Card", pausePanel.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(420f, 330f), new Color(0.07f, 0.09f, 0.15f, 0.97f));
+        RuntimeUi.Label("Title", card.transform, "Paused", 40f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -16f), new Vector2(380f, 54f), TextAlignmentOptions.Center);
+
+        var resume = RuntimeUi.ButtonWithLabel("Resume", card.transform, "Resume", 30f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -86f), new Vector2(280f, 62f), new Color(0.15f, 0.55f, 0.35f, 1f));
+        resume.onClick.AddListener(delegate { SetPaused(false); });
+
+        var menu = RuntimeUi.ButtonWithLabel("MainMenu", card.transform, "Main menu", 30f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -164f), new Vector2(280f, 62f), new Color(0.55f, 0.2f, 0.2f, 1f));
+        menu.onClick.AddListener(delegate { UnityEngine.SceneManagement.SceneManager.LoadScene("Main Menu", UnityEngine.SceneManagement.LoadSceneMode.Single); });
+
+        RuntimeUi.Label("Note", card.transform, "The online game keeps running - your cell stands still while paused.", 16f, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 12f), new Vector2(380f, 56f), TextAlignmentOptions.Center);
+
+        pausePanel.SetActive(false);
+    }
+
+    public void SetPaused(bool paused)
+    {
+        if (pausePanel == null || pausePanel.activeSelf == paused) return;
+        pausePanel.SetActive(paused);
+        GameAudio.Play("click");
+    }
+
+    private void Update()
+    {
+        // Escape is the Android back button too.
+        if (Input.GetKeyDown(KeyCode.Escape)) SetPaused(!Paused);
+    }
+
+    // Coming back from the phone's settings / another app lands on the pause menu, not mid-fight.
+    private void OnApplicationPause(bool pause)
+    {
+        if (pause) SetPaused(true);
     }
 
     private void BuildMuteButton()
     {
         if (!RuntimeUi.HasEventSystem) return;
 
-        var button = RuntimeUi.ButtonWithLabel("Mute", canvas.transform, "", 26f, MuteAnchor, new Vector2(0f, 1f), MuteOffset, new Vector2(200f, 64f), RuntimeUi.PanelColor);
+        var button = RuntimeUi.ButtonWithLabel("Mute", canvas.transform, "", 18f, MuteAnchor, new Vector2(1f, 1f), MuteOffset, new Vector2(150f, 42f), RuntimeUi.PanelColor);
         muteLabel = button.GetComponentInChildren<TextMeshProUGUI>();
         RefreshMuteLabel();
         button.onClick.AddListener(delegate
@@ -71,6 +122,14 @@ public class HudExtras : MonoBehaviour
             PlayerHandleData.Save(data);
             AudioListener.volume = data.masterVolume;
             RefreshMuteLabel();
+            GameAudio.Play("click");
+        });
+
+        var theme = RuntimeUi.ButtonWithLabel("Theme", canvas.transform, Theme.Label(Theme.Night), 18f, MuteAnchor, new Vector2(1f, 1f), MuteOffset + new Vector2(0f, -50f), new Vector2(150f, 42f), RuntimeUi.PanelColor);
+        var themeLabel = theme.GetComponentInChildren<TextMeshProUGUI>();
+        theme.onClick.AddListener(delegate
+        {
+            themeLabel.text = Theme.Label(Theme.Toggle());
             GameAudio.Play("click");
         });
     }
@@ -84,11 +143,11 @@ public class HudExtras : MonoBehaviour
 
     private void BuildEffectBadges()
     {
-        var row = RuntimeUi.Rect("Effects", canvas.transform, EffectsAnchor, new Vector2(0.5f, 1f), EffectsOffset, new Vector2(300f, 90f));
+        var row = RuntimeUi.Rect("Effects", canvas.transform, EffectsAnchor, new Vector2(0.5f, 1f), EffectsOffset, new Vector2(200f, 60f));
         string[] kinds = { "speed", "shield", "magnet" };
         for (int i = 0; i < 3; i++)
         {
-            var img = RuntimeUi.Panel(kinds[i], row, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2((i - 1) * 100f, 0f), new Vector2(84f, 84f), Color.white);
+            var img = RuntimeUi.Panel(kinds[i], row, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2((i - 1) * 66f, 0f), new Vector2(56f, 56f), Color.white);
             img.sprite = ProceduralSprites.Badge(kinds[i]);
             img.gameObject.SetActive(false);
             effectBadges[i] = img;
@@ -118,9 +177,9 @@ public class HudExtras : MonoBehaviour
         if (PlayerPrefs.GetInt(TutorialSeenKey, 0) != 0) return;
 
         // Sits between the player (screen centre) and the joysticks so it never hides either.
-        var panel = RuntimeUi.Panel("Tutorial", canvas.transform, new Vector2(0.5f, 0.335f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(920f, 300f), new Color(0.05f, 0.07f, 0.12f, 0.8f));
-        RuntimeUi.Label("Text", panel.transform, "<b>How to play</b>\nDrag the joystick to move and eat pellets.\nEat cells smaller than you, run from bigger ones.\nSplit to attack; avoid green spikes when big.\nGrab glowing badges: speed, shield, magnet.", 30f,
-            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(880f, 280f), TextAlignmentOptions.Center);
+        var panel = RuntimeUi.Panel("Tutorial", canvas.transform, new Vector2(0.5f, 0.3f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(640f, 150f), new Color(0.05f, 0.07f, 0.12f, 0.8f));
+        RuntimeUi.Label("Text", panel.transform, "<b>How to play</b>\nDrag the joystick to move and eat pellets.\nEat cells smaller than you, run from bigger ones.\nSplit to attack; avoid green spikes when big.\nGrab glowing badges: speed, shield, magnet.", 19f,
+            new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(620f, 140f), TextAlignmentOptions.Center);
         tutorial = panel.gameObject;
         Invoke("HideTutorial", 9f);
     }

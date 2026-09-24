@@ -40,27 +40,27 @@ public class LeaderboardPanel : MonoBehaviour
         dim.raycastTarget = true;
         panel = dim.gameObject;
 
-        var card = RuntimeUi.Panel("Card", panel.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(900f, 1150f), new Color(0.07f, 0.09f, 0.15f, 0.97f));
-        RuntimeUi.Label("Title", card.transform, "Top players", 56f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -26f), new Vector2(860f, 80f), TextAlignmentOptions.Center);
+        var card = RuntimeUi.Panel("Card", panel.transform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(640f, 620f), new Color(0.07f, 0.09f, 0.15f, 0.97f));
+        RuntimeUi.Label("Title", card.transform, "Top players", 36f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -14f), new Vector2(600f, 50f), TextAlignmentOptions.Center);
 
         string[] tabs = { "Today", "This week", "All time" };
         for (int i = 0; i < 3; i++)
         {
             byte period = (byte)i;
-            var tab = RuntimeUi.ButtonWithLabel("Tab" + i, card.transform, tabs[i], 36f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2((i - 1) * 270f, -120f), new Vector2(250f, 74f), new Color(0.2f, 0.28f, 0.45f, 1f));
+            var tab = RuntimeUi.ButtonWithLabel("Tab" + i, card.transform, tabs[i], 24f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2((i - 1) * 190f, -72f), new Vector2(180f, 48f), new Color(0.2f, 0.28f, 0.45f, 1f));
             tab.onClick.AddListener(delegate { Request(period); });
         }
 
-        body = RuntimeUi.Label("Body", card.transform, "", 40f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -220f), new Vector2(820f, 780f), TextAlignmentOptions.TopLeft);
+        body = RuntimeUi.Label("Body", card.transform, "", 26f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -132f), new Vector2(580f, 400f), TextAlignmentOptions.TopLeft);
         body.enableWordWrapping = false;
 
-        var close = RuntimeUi.ButtonWithLabel("Close", card.transform, "Close", 40f, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 26f), new Vector2(300f, 84f), new Color(0.5f, 0.2f, 0.2f, 1f));
+        var close = RuntimeUi.ButtonWithLabel("Close", card.transform, "Close", 26f, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 14f), new Vector2(200f, 54f), new Color(0.5f, 0.2f, 0.2f, 1f));
         close.onClick.AddListener(delegate { panel.SetActive(false); GameAudio.Play("click"); });
 
         panel.SetActive(false);
 
         // The button that opens it, placed by the caller in whatever menu layout exists.
-        var open = RuntimeUi.ButtonWithLabel("OpenLeaderboard", buttonParent, "Top players", 38f, anchor, pivot, offset, new Vector2(330f, 84f), new Color(0.15f, 0.2f, 0.34f, 0.92f));
+        var open = RuntimeUi.ButtonWithLabel("OpenLeaderboard", buttonParent, "Top players", 22f, anchor, pivot, offset, new Vector2(190f, 46f), new Color(0.15f, 0.2f, 0.34f, 0.92f));
         open.onClick.AddListener(delegate
         {
             panel.SetActive(true);
@@ -148,8 +148,7 @@ public class LeaderboardPanel : MonoBehaviour
         for (int i = 0; i < list.Names.Count; i++)
         {
             int total = Mathf.Max(0, Mathf.RoundToInt(list.Seconds[i]));
-            lines.AppendFormat("{0,2}.  {1}\n", i + 1, list.Names[i]);
-            lines.AppendFormat("      <color=#9fb3d9>{0} mass  -  {1}:{2:00}</color>\n", Mathf.RoundToInt(list.Masses[i]), total / 60, total % 60);
+            lines.AppendFormat("{0,2}.  {1}   <color=#9fb3d9>{2} mass - {3}:{4:00}</color>\n", i + 1, list.Names[i], Mathf.RoundToInt(list.Masses[i]), total / 60, total % 60);
         }
         return lines.ToString();
     }

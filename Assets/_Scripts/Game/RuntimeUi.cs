@@ -11,7 +11,11 @@ public static class RuntimeUi
     public static readonly Color PanelColor = new Color(0.05f, 0.07f, 0.12f, 0.72f);
     public static readonly Color TextColor = new Color(1f, 1f, 1f, 0.95f);
 
-    /// <summary>A full-screen overlay canvas that scales with the screen (portrait 1080x1920 reference).</summary>
+    // The game is landscape-only (ProjectSettings), and the scenes' own canvases use 1280x720, so the
+    // extras use the same reference; the old portrait 1080x1920 made them overlap the scene UI.
+    public static readonly Vector2 Reference = new Vector2(1280f, 720f);
+
+    /// <summary>A full-screen overlay canvas that scales with the screen (landscape 1280x720 reference).</summary>
     public static Canvas CreateCanvas(string name, int sortingOrder)
     {
         var go = new GameObject(name);
@@ -21,7 +25,7 @@ public static class RuntimeUi
 
         var scaler = go.AddComponent<CanvasScaler>();
         scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-        scaler.referenceResolution = new Vector2(1080f, 1920f);
+        scaler.referenceResolution = Reference;
         scaler.matchWidthOrHeight = 0.5f;
 
         go.AddComponent<GraphicRaycaster>();

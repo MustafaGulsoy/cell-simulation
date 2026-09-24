@@ -11,6 +11,8 @@ public class GameAudio : MonoBehaviour
     private static readonly Dictionary<string, AudioClip> clips = new Dictionary<string, AudioClip>();
     private static readonly Dictionary<string, float> lastPlayed = new Dictionary<string, float>();
 
+    private static readonly Dictionary<string, int> counts = new Dictionary<string, int>();
+
     private AudioSource source;
 
     /// <summary>Playing count for tests/diagnostics.</summary>
@@ -80,5 +82,16 @@ public class GameAudio : MonoBehaviour
         src.pitch = 1f + Random.Range(-pitchJitter, pitchJitter);
         src.PlayOneShot(clip, volume);
         PlayedCount++;
+        int n;
+        counts.TryGetValue(name, out n);
+        counts[name] = n + 1;
+    }
+
+    /// <summary>How many times a clip has been played (diagnostics for the autopilot).</summary>
+    public static int CountOf(string name)
+    {
+        int n;
+        counts.TryGetValue(name, out n);
+        return n;
     }
 }

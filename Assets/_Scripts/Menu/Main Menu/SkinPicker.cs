@@ -21,6 +21,13 @@ public static class SkinPicker
         new Color32(200, 214, 229, 255), // silver
     };
 
+    /// <summary>The menu starts on "random" every time it opens, so a colour is only used when it was
+    /// picked during that visit.</summary>
+    public static void ResetToRandom()
+    {
+        PlayerPrefs.SetInt(SkinPrefKey, -1);
+    }
+
     public static int Pack(Color32 c)
     {
         return (c.r << 16) | (c.g << 8) | c.b;
@@ -34,13 +41,13 @@ public static class SkinPicker
     /// <summary>Builds the picker under <paramref name="parent"/>. Returns a refresh action (highlights the chosen swatch).</summary>
     public static void Build(Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset)
     {
-        const float swatch = 84f;
-        const float gap = 14f;
+        const float swatch = 52f;
+        const float gap = 8f;
         int count = Palette.Length + 1; // + "random"
-        float width = count * swatch + (count - 1) * gap + 40f;
+        float width = count * swatch + (count - 1) * gap + 24f;
 
-        var panel = RuntimeUi.Panel("SkinPicker", parent, anchor, pivot, offset, new Vector2(width, swatch + 96f), RuntimeUi.PanelColor);
-        RuntimeUi.Label("Title", panel.transform, "Your colour", 34f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -8f), new Vector2(width, 44f), TMPro.TextAlignmentOptions.Center);
+        var panel = RuntimeUi.Panel("SkinPicker", parent, anchor, pivot, offset, new Vector2(width, swatch + 50f), RuntimeUi.PanelColor);
+        RuntimeUi.Label("Title", panel.transform, "Your colour (? = random)", 18f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -5f), new Vector2(width, 26f), TMPro.TextAlignmentOptions.Center);
 
         var outlines = new Image[count];
         for (int i = 0; i < count; i++)
@@ -48,12 +55,12 @@ public static class SkinPicker
             bool isRandom = i == Palette.Length;
             Color32 colour = isRandom ? new Color32(90, 96, 110, 255) : Palette[i];
             int packed = isRandom ? -1 : Pack(colour);
-            float x = 20f + i * (swatch + gap);
+            float x = 12f + i * (swatch + gap);
 
-            var frame = RuntimeUi.Panel("Frame" + i, panel.transform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(x, 14f), new Vector2(swatch, swatch), Color.clear);
+            var frame = RuntimeUi.Panel("Frame" + i, panel.transform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(x, 8f), new Vector2(swatch, swatch), Color.clear);
             outlines[i] = frame;
 
-            var button = RuntimeUi.ButtonWithLabel("Swatch" + i, frame.transform, isRandom ? "?" : "", 44f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(swatch - 14f, swatch - 14f), colour);
+            var button = RuntimeUi.ButtonWithLabel("Swatch" + i, frame.transform, isRandom ? "?" : "", 28f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(swatch - 10f, swatch - 10f), colour);
             int captured = packed;
             int index = i;
             button.onClick.AddListener(delegate

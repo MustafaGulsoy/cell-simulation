@@ -130,23 +130,143 @@ public static class ProceduralSprites
         }
     }
 
-    private static Sprite Build(System.Func<float, float, Color> pixel)
+    // Outline drawn around the local player's cells: a black band hugging the cell and a white band
+    // outside it, so the cell stands out on both the light and the dark map. Meant to sit on a child
+    // scaled OutlineScale times the blob (see PlayerBlob.SetOutline); the blob's own rim is then at
+    // radius BodyRadius / OutlineScale in sprite space.
+    public const float OutlineScale = 1.32f;
+    // The blob art reaches ~0.55 of the transform scale from its centre (measured in screenshots), a bit past the nominal 0.5.
+    private const float BodyRadius = 0.55f;
+    private static Sprite outline;
+
+    public static Sprite Outline()
     {
-        var tex = new Texture2D(Size, Size, TextureFormat.RGBA32, false);
+        if (outline == null)
+        {
+            const float edge = BodyRadius / OutlineScale;
+            const float black = 0.034f;
+            outline = Build(delegate (float x, float y)
+            {
+                float r = Mathf.Sqrt(x * x + y * y);
+                float inner = Mathf.Clamp01((r - edge) / 0.006f);
+                float outer = Mathf.Clamp01((0.4995f - r) / 0.006f);
+                float a = inner * outer;
+                return r < edge + black ? new Color(0f, 0f, 0f, a) : new Color(1f, 1f, 1f, a);
+            }, 128);
+        }
+        return outline;
+    }
+
+    // ---- emotes: round faces drawn from a few shapes ----
+
+    private static readonly Dictionary<byte, Sprite> emojis = new Dictionary<byte, Sprite>();
+
+    /// <summary>Emote ids used by the Emoji message: 1 = smile, 2 = laughing, 3 = angry.</summary>
+    public static Sprite Emoji(byte id)
+    {
+        if (id < 1 || id > 3) id = 1;
+        Sprite s;
+        if (emojis.TryGetValue(id, out s))
+        {
+            return s;
+        }
+
+        var ink = new Color(0.2f, 0.11f, 0.05f, 1f);
+        var yellow = new Color(1f, 0.82f, 0.18f, 1f);
+        var red = new Color(0.95f, 0.32f, 0.2f, 1f);
+        s = Build(delegate (float x, float y)
+        {
+            float r = Mathf.Sqrt(x * x + y * y);
+            float alpha = Mathf.Clamp01((0.49f - r) / 0.012f);
+            if (alpha <= 0f)
+            {
+                return new Color(0, 0, 0, 0);
+            }
+
+            // Face: lighter towards the top-left, dark rim.
+            Color face = id == 3 ? red : yellow;
+            Color c = Color.Lerp(face * 0.82f, Color.Lerp(face, Color.white, 0.25f), Mathf.Clamp01(0.5f + (-x + y) * 1.1f));
+            c = Color.Lerp(c, new Color(0.45f, 0.25f, 0.05f), Mathf.Clamp01((r - 0.44f) / 0.04f));
+            c.a = 1f;
+
+            float mark = 0f;
+            Color markColor = ink;
+            if (id == 1)
+            {
+                mark = Mathf.Max(Blob(x, y, -0.16f, 0.1f, 0.055f, 0.075f), Blob(x, y, 0.16f, 0.1f, 0.055f, 0.075f), y < -0.08f ? Arc(x, y, 0f, 0.02f, 0.27f, 0.025f) : 0f);
+            }
+            else if (id == 2)
+            {
+                float eyes = Mathf.Max(y > 0.06f ? Arc(x, y, -0.17f, 0.06f, 0.085f, 0.022f) : 0f, y > 0.06f ? Arc(x, y, 0.17f, 0.06f, 0.085f, 0.022f) : 0f);
+                float mouth = y < -0.04f ? Cover(Mathf.Sqrt(x * x + (y + 0.04f) * (y + 0.04f)) - 0.27f) : 0f;
+                mark = Mathf.Max(eyes, mouth);
+                if (mouth > 0.5f)
+                {
+                    // Open mouth: dark red with a pink tongue and a white row of teeth.
+                    markColor = new Color(0.5f, 0.08f, 0.1f, 1f);
+                    float mr = Mathf.Sqrt(x * x + (y + 0.04f) * (y + 0.04f));
+                    if (y > -0.1f) markColor = Color.white;
+                    else if (y < -0.2f && mr < 0.22f && Mathf.Abs(x) < 0.15f) markColor = new Color(1f, 0.5f, 0.55f, 1f);
+                }
+            }
+            else
+            {
+                float brow = Mathf.Max(Segment(x, y, -0.27f, 0.23f, -0.06f, 0.13f, 0.028f), Segment(x, y, 0.27f, 0.23f, 0.06f, 0.13f, 0.028f));
+                float eyes = Mathf.Max(Blob(x, y, -0.15f, 0.04f, 0.05f, 0.05f), Blob(x, y, 0.15f, 0.04f, 0.05f, 0.05f));
+                float frown = y > -0.31f ? Arc(x, y, 0f, -0.36f, 0.2f, 0.024f) : 0f;
+                mark = Mathf.Max(brow, eyes, frown);
+            }
+
+            c = Color.Lerp(c, markColor, mark);
+            c.a = alpha;
+            return c;
+        }, 96);
+        emojis[id] = s;
+        return s;
+    }
+
+    private static float Cover(float signedDistance)
+    {
+        return Mathf.Clamp01(0.5f - signedDistance / 0.012f);
+    }
+
+    private static float Blob(float x, float y, float cx, float cy, float rx, float ry)
+    {
+        float d = Mathf.Sqrt((x - cx) * (x - cx) / (rx * rx) + (y - cy) * (y - cy) / (ry * ry)) - 1f;
+        return Cover(d * Mathf.Min(rx, ry));
+    }
+
+    private static float Arc(float x, float y, float cx, float cy, float radius, float halfWidth)
+    {
+        float d = Mathf.Abs(Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) - radius) - halfWidth;
+        return Cover(d);
+    }
+
+    private static float Segment(float x, float y, float ax, float ay, float bx, float by, float halfWidth)
+    {
+        float dx = bx - ax, dy = by - ay;
+        float t = Mathf.Clamp01(((x - ax) * dx + (y - ay) * dy) / (dx * dx + dy * dy));
+        float px = ax + t * dx - x, py = ay + t * dy - y;
+        return Cover(Mathf.Sqrt(px * px + py * py) - halfWidth);
+    }
+
+    private static Sprite Build(System.Func<float, float, Color> pixel, int size = Size)
+    {
+        var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
         tex.filterMode = FilterMode.Bilinear;
         tex.wrapMode = TextureWrapMode.Clamp;
-        var colors = new Color[Size * Size];
-        for (int py = 0; py < Size; py++)
+        var colors = new Color[size * size];
+        for (int py = 0; py < size; py++)
         {
-            for (int px = 0; px < Size; px++)
+            for (int px = 0; px < size; px++)
             {
-                float x = (px + 0.5f) / Size - 0.5f;
-                float y = (py + 0.5f) / Size - 0.5f;
-                colors[py * Size + px] = pixel(x, y);
+                float x = (px + 0.5f) / size - 0.5f;
+                float y = (py + 0.5f) / size - 0.5f;
+                colors[py * size + px] = pixel(x, y);
             }
         }
         tex.SetPixels(colors);
         tex.Apply(false, true);
-        return Sprite.Create(tex, new Rect(0, 0, Size, Size), new Vector2(0.5f, 0.5f), Size);
+        return Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), size);
     }
 }

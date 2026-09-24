@@ -78,6 +78,26 @@ public class AutoPilot : MonoBehaviour
         yield return new WaitForSeconds(2.5f);
         yield return Shot("menu");
 
+        var profile = GameObject.Find("Profile Button");
+        if (profile != null)
+        {
+            profile.GetComponent<Button>().onClick.Invoke();
+            yield return new WaitForSeconds(1f);
+            yield return Shot("menu-profile");
+            Log("in profile: main menu active=" + IsActive("Main Menu") + " extras active=" + IsActive("MenuExtras"));
+
+            var page = GameObject.Find("Profile Menu");
+            foreach (var b in page.GetComponentsInChildren<Button>())
+            {
+                if (b.name != "Back Button") continue;
+                b.onClick.Invoke();
+                yield return new WaitForSeconds(1f);
+                yield return Shot("menu-back");
+                Log("back on main: main menu active=" + IsActive("Main Menu") + " extras active=" + IsActive("MenuExtras"));
+                break;
+            }
+        }
+
         var open = GameObject.Find("OpenLeaderboard");
         if (open != null)
         {
@@ -90,6 +110,15 @@ public class AutoPilot : MonoBehaviour
             Log("WARNING: leaderboard button not found");
         }
         Finish(0);
+    }
+
+    private static bool IsActive(string name)
+    {
+        foreach (var t in Resources.FindObjectsOfTypeAll<Transform>())
+        {
+            if (t.name == name && t.gameObject.scene.IsValid()) return t.gameObject.activeInHierarchy;
+        }
+        return false;
     }
 
     // ---- gameplay ----
@@ -148,6 +177,39 @@ public class AutoPilot : MonoBehaviour
         yield return new WaitForSeconds(2.0f);
         Log("after split: pieces=" + client.OwnPieceCount + " mass=" + client.DebugMyMass.ToString("0.0"));
         yield return Shot("game-split");
+
+        // Dark theme through the same code path as the HUD button, and back.
+        bool wasNight = Theme.Night;
+        Theme.Toggle();
+        yield return new WaitForSeconds(0.5f);
+        yield return Shot(wasNight ? "game-light" : "game-dark");
+        Theme.Toggle();
+
+        // Emotes are drawn faces now; pause menu opens and the cell holds still.
+        client.SendEmoji(2);
+        yield return new WaitForSeconds(0.6f);
+        yield return Shot("game-emoji");
+        client.TogglePause();
+        yield return new WaitForSeconds(0.5f);
+        Vector2 pausedAt = client.DebugMyPosition;
+        yield return new WaitForSeconds(1.0f);
+        Log("paused=" + client.Paused + " drift while paused=" + (client.DebugMyPosition - pausedAt).magnitude.ToString("0.00"));
+        yield return Shot("game-paused");
+        client.TogglePause();
+        Log("resumed, paused=" + client.Paused);
+
+        // Eating while split: the pellet sound has to come from ANY piece, not just the primary.
+        int eatBefore = GameAudio.CountOf("eat");
+        int piecesBefore = client.OwnPieceCount;
+        float eatUntil = Time.realtimeSinceStartup + 8f;
+        while (Time.realtimeSinceStartup < eatUntil)
+        {
+            Vector2 foodTarget;
+            Vector2 here = client.DebugMyPosition;
+            client.DebugInput = client.DebugNearestFood(here, out foodTarget) ? (foodTarget - here).normalized : Vector2.zero;
+            yield return new WaitForSeconds(0.1f);
+        }
+        Log("eat sounds while split: " + (GameAudio.CountOf("eat") - eatBefore) + " (pieces " + piecesBefore + " -> " + client.OwnPieceCount + ")");
 
         client.SendEject();
         client.DebugInput = new Vector2(-0.5f, 1f).normalized;

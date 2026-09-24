@@ -127,6 +127,7 @@ public class GameClient : MonoBehaviour
     private float lastKnownMass = PlayerBlob.MASS_MIN;
     private byte lastOwnEffects;
     private int lastOwnPieceCount = 1;
+    private float lastOwnTotalMass = PlayerBlob.MASS_MIN;
     private List<(string Name, float Mass)> lastLeaderboard = new List<(string Name, float Mass)>();
 
     private readonly Dictionary<uint, PlayerBlob> players = new Dictionary<uint, PlayerBlob>();
@@ -153,14 +154,9 @@ public class GameClient : MonoBehaviour
         ApplyStreakAndDailyReset();
         GameAudio.ApplySavedVolume();
 
-        // playerData.nightMode already existed (set from the Main Menu toggle) but nothing ever
-        // read it - the background never actually changed. PlayerHUD.updateJoystickColor already
-        // adapts joystick tint to Camera.main.backgroundColor, it just needed something to set
-        // that color in the first place.
-        if (Camera.main != null)
-        {
-            Camera.main.backgroundColor = playerData.nightMode ? Color.black : Color.white;
-        }
+        // Dark/light map background (the Main Menu toggle was never wired in the scene; there is now a
+        // button in the menu and one in the HUD, see Theme).
+        Theme.Apply(playerData.nightMode);
 
         // Developer override: `-server host` / `-port n` on the command line (or BLOB_SERVER), e.g. to test against a local server.
         serverHost = ServerAddress.Host(serverHost);
@@ -285,7 +281,12 @@ public class GameClient : MonoBehaviour
         }
 
         Vector2 dir;
-        if (DebugInput.HasValue)
+        if (Paused)
+        {
+            // The pause menu is open: the cell stands still (the online world can't be frozen).
+            dir = Vector2.zero;
+        }
+        else if (DebugInput.HasValue)
         {
             dir = DebugInput.Value;
         }
@@ -351,17 +352,28 @@ public class GameClient : MonoBehaviour
     /// <summary>Server validates mass/cooldown - this just requests it, the server can reject silently.</summary>
     public void SendSplit()
     {
+        if (Paused) return;
         Send(new[] { (byte)ClientMsg.Split });
     }
 
     public void SendEject()
     {
+        if (Paused) return;
         Send(new[] { (byte)ClientMsg.Eject });
         GameAudio.Play("eject", 0.8f);
     }
 
+    /// <summary>True while the pause menu is open.</summary>
+    public bool Paused { get { return hud != null && hud.Paused; } }
+
+    public void TogglePause()
+    {
+        if (hud != null) hud.SetPaused(!hud.Paused);
+    }
+
     public void SendEmoji(byte emojiId)
     {
+        if (Paused) return;
         Send(new[] { (byte)ClientMsg.Emoji, emojiId });
     }
 
@@ -653,6 +665,7 @@ public class GameClient : MonoBehaviour
         foreach (var kv in players)
         {
             bool isMine = kv.Key == myEntityId || (groupOf.TryGetValue(kv.Key, out var owner) && owner == myEntityId);
+            kv.Value.SetOutline(isMine);
             if (!isMine)
             {
                 continue;
@@ -673,6 +686,14 @@ public class GameClient : MonoBehaviour
         {
             GameAudio.Play("merge", 0.8f);
         }
+        // A pellet eaten by ANY piece: the HUD only ever saw the primary's mass, so once split the other
+        // pieces ate in silence. Total mass across all pieces rises by a pellet's worth; splits and merges
+        // conserve it, so only compare while the piece count is unchanged.
+        if (ownPieces.Count == lastOwnPieceCount && totalMass > lastOwnTotalMass + 0.05f && totalMass - lastOwnTotalMass <= 2.5f * ownPieces.Count)
+        {
+            GameAudio.Play("eat", 0.35f, 0.12f, 0.07f);
+        }
+        lastOwnTotalMass = totalMass;
         lastOwnPieceCount = ownPieces.Count;
 
         if (hud != null)
@@ -694,12 +715,6 @@ public class GameClient : MonoBehaviour
                 lifeStartTime = Time.time;
                 sessionPeakMass = PlayerBlob.MASS_MIN;
             }
-        }
-
-        // A little blip when the local cell picks up a pellet: mass ticks up by the small food gain.
-        if (e.Mass > lastKnownMass && e.Mass - lastKnownMass <= 2.5f)
-        {
-            GameAudio.Play("eat", 0.35f, 0.12f, 0.07f);
         }
 
         // Effects: a chime the moment a new one starts, and the badges in the HUD.
