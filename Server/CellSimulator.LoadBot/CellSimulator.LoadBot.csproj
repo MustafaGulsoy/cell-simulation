@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The Unity client's own decoder, so the load test parses packets exactly like the game does. -->
+    <Compile Include="..\..\Assets\_Scripts\Game\SnapshotDecoder.cs" Link="ClientCode\SnapshotDecoder.cs" />
+  </ItemGroup>
+
+</Project>

@@ -6,6 +6,14 @@ namespace CellSimulator.Server.Game;
 /// (e.g. <c>Game__SplitForce=1.3</c>) - Program.cs binds it once at startup. Constants that are
 /// really rules (mass formulas, scale limits) stay in <see cref="Rules"/>.
 /// </summary>
+/// <summary>Easy bots see less far, are slower and ignore spikes; Hard bots see farther and dodge spikes.</summary>
+public enum BotDifficulty
+{
+    Easy,
+    Normal,
+    Hard,
+}
+
 public sealed class GameConfig
 {
     public static GameConfig Current { get; private set; } = new();
@@ -48,6 +56,18 @@ public sealed class GameConfig
     /// <summary>Farthest a spike-thrown pellet can travel (each one flies 40-100% of this).</summary>
     public float SpikyFoodLaunchDistance { get; set; } = 40f;
 
+    // ---- Power-ups ----
+    /// <summary>How long a collected power-up lasts (shield uses PowerupSeconds too).</summary>
+    public float PowerupSeconds { get; set; } = 8f;
+    /// <summary>Seconds a picked-up power-up stays gone before reappearing elsewhere.</summary>
+    public float PowerupRespawnSeconds { get; set; } = 20f;
+    public float SpeedBoostMultiplier { get; set; } = 1.5f;
+    /// <summary>While magnetised a cell's food reach is this many times larger (and it can eat several pellets a tick).</summary>
+    public float MagnetRadiusMultiplier { get; set; } = 2.2f;
+
+    // ---- Bots ----
+    public BotDifficulty BotDifficulty { get; set; } = BotDifficulty.Normal;
+
     // ---- Map ----
     /// <summary>Size of the default ("Small") map in world units; the other MapSize choices are multiples of it.</summary>
     public float MapWidth { get; set; } = 1600f;
@@ -71,6 +91,10 @@ public sealed class GameConfig
         SpikySplitCount = Math.Clamp(SpikySplitCount, 2, Rules.MaxPiecesPerPlayer);
         SpikyFoodCount = Math.Clamp(SpikyFoodCount, 0, 64);
         SpikyFoodLaunchDistance = Math.Max(1f, SpikyFoodLaunchDistance);
+        PowerupSeconds = Math.Clamp(PowerupSeconds, 1f, 60f);
+        PowerupRespawnSeconds = Math.Clamp(PowerupRespawnSeconds, 1f, 600f);
+        SpeedBoostMultiplier = Math.Clamp(SpeedBoostMultiplier, 1f, 3f);
+        MagnetRadiusMultiplier = Math.Clamp(MagnetRadiusMultiplier, 1f, 5f);
         MapWidth = Math.Max(200f, MapWidth);
         MapHeight = Math.Max(200f, MapHeight);
         MaxFoodCount = Math.Max(50, MaxFoodCount);

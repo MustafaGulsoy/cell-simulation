@@ -8,11 +8,23 @@ public enum EntityType : byte
     Ai = 1,
     Virus = 2,
     Saw = 3,
+    Powerup = 4,
 }
 
 public struct Rgba
 {
     public byte R, G, B, A;
+
+    /// <summary>A colour picked by a client is untrusted input: force it opaque and keep it away from
+    /// the hazard colours (virus/saw green) so nobody can dress up as a spike, and off pure black/white
+    /// so the blob and its outline stay visible on both the day and night backgrounds.</summary>
+    public static Rgba Sanitize(Rgba c)
+    {
+        int r = Math.Clamp((int)c.R, 25, 235), g = Math.Clamp((int)c.G, 25, 235), b = Math.Clamp((int)c.B, 25, 235);
+        bool spikeGreen = g > 150 && r < 110 && b < 130;
+        if (spikeGreen) { r = 200; b = Math.Max(b, 150); }
+        return new Rgba { R = (byte)r, G = (byte)g, B = (byte)b, A = 255 };
+    }
 
     public static Rgba Random(Random rng)
     {
@@ -50,6 +62,20 @@ public abstract class Entity
     // Per-entity spike-pop cooldown gate; only players/bots ever get hit, but lives on the base
     // type since the hazard pass iterates both uniformly.
     public DateTime LastSawHitUtc = DateTime.MinValue;
+
+    // Timed power-up effects (see PowerupEntity). Players get them group-wide (GameWorld.GrantPowerup),
+    // so clones inherit them; bots can collect them too.
+    public DateTime SpeedBoostUntil = DateTime.MinValue;
+    public DateTime ShieldUntil = DateTime.MinValue;
+    public DateTime MagnetUntil = DateTime.MinValue;
+
+    public bool HasSpeedBoost(DateTime now) => now < SpeedBoostUntil;
+    public bool HasShield(DateTime now) => now < ShieldUntil;
+    public bool HasMagnet(DateTime now) => now < MagnetUntil;
+
+    /// <summary>Bit 1 = speed, 2 = shield, 4 = magnet: what's sent to clients so they can draw the glow.</summary>
+    public byte EffectMask(DateTime now) =>
+        (byte)((HasSpeedBoost(now) ? 1 : 0) | (HasShield(now) ? 2 : 0) | (HasMagnet(now) ? 4 : 0));
 
     public float Scale => Rules.CalculateScale(Mass);
 }

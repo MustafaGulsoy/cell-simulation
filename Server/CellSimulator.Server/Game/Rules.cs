@@ -108,7 +108,20 @@ public static class Rules
     public const int SawFeedThresholdMin = 2;
     public const int SawFeedThresholdMax = 4;
     public const float SawFeedLaunchDistance = 55f;
-    public const int SawMaxCountMultiplier = 5; // hard cap: GameWorld.SawCount * this
+
+    // Power-up pickups on the map: about one per PowerupAreaPerItem square units.
+    public const float PowerupScale = 5f;
+    public static readonly float PowerupMass = PowerupScale * PowerupScale / ScaleMultiplier;
+    public const float PowerupAreaPerItem = 300f * 300f;
+
+    // Feeding a spike (any pellet thrown with W): thresholds/launch distance are the saw's above; a virus follows the same rule.
+    public const int SpikeMaxCountMultiplier = 5; // hard cap per spike kind: GameWorld base count * this
+
+    // Bot difficulty presets (how far they notice things, how fast they move, whether they dodge spikes).
+    public static float BotSenseRange(BotDifficulty d) => d switch { BotDifficulty.Easy => 28f, BotDifficulty.Hard => 60f, _ => 40f };
+    public static float BotSpeedFactor(BotDifficulty d) => d switch { BotDifficulty.Easy => 0.85f, _ => 1f };
+    public static bool BotAvoidsSpikes(BotDifficulty d) => d != BotDifficulty.Easy;
+    public const float BotSpikeAvoidMargin = 12f;
 
     public static float CalculateScale(float mass)
     {

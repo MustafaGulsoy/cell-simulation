@@ -9,6 +9,11 @@ COPY --from=build /app/publish .
 ENV ASPNETCORE_URLS=http://0.0.0.0:5000
 EXPOSE 5000/tcp
 EXPOSE 7778/udp
+# The persistent leaderboard lives here; mount a volume on it (deploy.sh does) so it survives redeploys.
+# Created and chown'd BEFORE dropping root, so a fresh named volume inherits app-writable ownership.
+ENV Server__DataDir=/data
+RUN mkdir -p /data && chown $APP_UID:$APP_UID /data
+VOLUME /data
 # Both ports are >1024, so the game server doesn't need root (APP_UID is set by the aspnet image).
 USER $APP_UID
 ENTRYPOINT ["dotnet", "CellSimulator.Server.dll"]

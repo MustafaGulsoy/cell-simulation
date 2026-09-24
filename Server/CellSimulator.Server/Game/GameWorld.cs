@@ -17,12 +17,19 @@ public sealed class GameWorld
     private readonly Dictionary<uint, AiEntity> _bots = new();
     private readonly Dictionary<uint, VirusEntity> _viruses = new();
     private readonly Dictionary<uint, SawEntity> _saws = new();
+    private readonly Dictionary<uint, PowerupEntity> _powerups = new();
+    // Spikes as one list, rebuilt each tick, for bots to look at without allocating per bot.
+    private List<Entity> _hazards = new();
     private readonly Dictionary<uint, FoodItem> _food = new();
     // Same items as _food, indexable: thrown pellets recycle an existing item (AcquirePelletItem)
     // instead of adding new ones, so the food count - which every client is sent in full on join
     // and never told to shrink - stays exactly FoodCount forever.
     private readonly List<FoodItem> _foodList = new();
     private readonly List<FoodItem> _foodChangedThisTick = new();
+
+    // Per-player (by GroupId) stats for the life in progress, and finished lives waiting to be collected.
+    private readonly Dictionary<uint, LifeStats> _stats = new();
+    private readonly List<DeathInfo> _deaths = new();
 
     private readonly Dictionary<uint, DateTime> _lastSplitUtc = new();
     private readonly Dictionary<uint, DateTime> _lastEjectUtc = new();
@@ -50,6 +57,7 @@ public sealed class GameWorld
     public int FoodCount { get; }
     public int VirusCount { get; }
     public int SawCount { get; }
+    public int PowerupCount { get; }
     public int PlayerCapacity { get; }
 
     public GameWorld(MapSize mapSize)
@@ -66,6 +74,7 @@ public sealed class GameWorld
         FoodCount = Math.Clamp((int)(side * 7f - 1000f), 50, GameConfig.Current.MaxFoodCount);
         VirusCount = Math.Max(3, (int)(side / 150f));
         SawCount = Math.Max(2, (int)(side / 200f));
+        PowerupCount = Math.Max(3, (int)(width * height / Rules.PowerupAreaPerItem));
         PlayerCapacity = Math.Max(2, (int)(side / 20f));
     }
 
@@ -94,7 +103,26 @@ public sealed class GameWorld
             {
                 SpawnSaw();
             }
+
+            for (int i = 0; i < PowerupCount; i++)
+            {
+                SpawnPowerup((PowerupKind)(1 + i % 3));
+            }
         }
+    }
+
+    private void SpawnPowerup(PowerupKind kind)
+    {
+        var powerup = new PowerupEntity
+        {
+            Id = _nextId++,
+            Kind = kind,
+            Position = RandomPosition(),
+            Mass = Rules.PowerupMass,
+            Color = PowerupEntity.ColorOf(kind),
+            Name = PowerupEntity.NameOf(kind),
+        };
+        _powerups[powerup.Id] = powerup;
     }
 
     private void SpawnVirus()
@@ -106,6 +134,21 @@ public sealed class GameWorld
             Mass = Rules.VirusMass,
             Color = Rules.VirusColor,
             Name = "Virus",
+            FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1),
+        };
+        _viruses[virus.Id] = virus;
+    }
+
+    private void SpawnVirusAt(Vector2 position)
+    {
+        var virus = new VirusEntity
+        {
+            Id = _nextId++,
+            Position = ClampToMap(position, Rules.VirusScale / 2f),
+            Mass = Rules.VirusMass,
+            Color = Rules.VirusColor,
+            Name = "Virus",
+            FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1),
         };
         _viruses[virus.Id] = virus;
     }
@@ -221,7 +264,8 @@ public sealed class GameWorld
         return string.IsNullOrWhiteSpace(stripped) ? "Unnamed" : stripped;
     }
 
-    public PlayerEntity AddPlayer(string name, IPEndPoint endPoint)
+    /// <param name="color">The player's chosen colour, if they picked one (see Rgba.Sanitize).</param>
+    public PlayerEntity AddPlayer(string name, IPEndPoint endPoint, Rgba? color = null)
     {
         lock (_gate)
         {
@@ -230,12 +274,13 @@ public sealed class GameWorld
                 Id = _nextId++,
                 Position = SafeSpawnPosition(),
                 Mass = Rules.MassMin,
-                Color = Rgba.Random(_rng),
+                Color = color.HasValue ? Rgba.Sanitize(color.Value) : Rgba.Random(_rng),
                 Name = SanitizeName(name),
                 EndPoint = endPoint,
             };
             player.GroupId = player.Id;
             _players[player.Id] = player;
+            _stats[player.GroupId] = new LifeStats { PeakMass = player.Mass };
             return player;
         }
     }
@@ -246,8 +291,10 @@ public sealed class GameWorld
         {
             // id is the group's original/primary Id (RoomManager only ever tracks that one in
             // Sessions), so a disconnect must drop every split piece the player currently owns.
-            var toRemove = _players.Values.Where(p => p.GroupId == id).Select(p => p.Id).ToList();
-            foreach (var pid in toRemove) _players.Remove(pid);
+            var toRemove = _players.Values.Where(p => p.GroupId == id).ToList();
+            if (toRemove.Count > 0) RecordDeath(toRemove[0], DeathReason.Disconnected, "");
+            foreach (var piece in toRemove) _players.Remove(piece.Id);
+            _stats.Remove(id);
             _lastSplitUtc.Remove(id);
             _lastEjectUtc.Remove(id);
             _lastEmojiUtc.Remove(id);
@@ -382,6 +429,9 @@ public sealed class GameWorld
             LastSeenUtc = source.LastSeenUtc,
             MergeEligibleUtc = mergeAt,
             LastSawHitUtc = source.LastSawHitUtc,
+            SpeedBoostUntil = source.SpeedBoostUntil,
+            ShieldUntil = source.ShieldUntil,
+            MagnetUntil = source.MagnetUntil,
         };
         StartLaunch(clone, dir, source);
         _players[clone.Id] = clone;
@@ -414,7 +464,14 @@ public sealed class GameWorld
             {
                 if (p.LastSeenUtc < cutoff) stale.Add(p.Id);
             }
-            foreach (var id in stale) _players.Remove(id);
+            var goneGroups = new HashSet<uint>();
+            foreach (var id in stale)
+            {
+                var piece = _players[id];
+                if (goneGroups.Add(piece.GroupId)) RecordDeath(piece, DeathReason.Disconnected, "");
+                _players.Remove(id);
+            }
+            foreach (var group in goneGroups) _stats.Remove(group);
             return stale;
         }
     }
@@ -425,6 +482,7 @@ public sealed class GameWorld
         {
             _foodChangedThisTick.Clear();
 
+            RefreshHazards();
             RefreshGroupCursors();
             MoveEntity(_players.Values, dt);
             foreach (var bot in _bots.Values)
@@ -434,8 +492,9 @@ public sealed class GameWorld
             MoveEntity(_bots.Values, dt);
 
             MoveFood(dt);
-            ResolveSawFeeding();
+            ResolveHazardFeeding();
             ResolveHazardCollisions();
+            ResolvePowerups();
             ResolveFoodEating();
             ResolveBlobEating(dt);
             // Last of the position fixes: blocking another player's blob (above) can shove a piece into
@@ -444,7 +503,104 @@ public sealed class GameWorld
             ResolveMerges();
             AdvanceAbsorptions(dt);
             ApplyMassDecay(dt);
+            TrackPeakMass();
             ConfineToMap();
+        }
+    }
+
+    private void RefreshHazards()
+    {
+        var hazards = new List<Entity>(_viruses.Count + _saws.Count);
+        hazards.AddRange(_viruses.Values);
+        hazards.AddRange(_saws.Values);
+        _hazards = hazards;
+    }
+
+    /// <summary>Every virus and saw (rebuilt at the start of each tick) - bots look at this to dodge them.</summary>
+    public IReadOnlyList<Entity> Hazards => _hazards;
+
+    private LifeStats StatsOf(uint groupId)
+    {
+        if (!_stats.TryGetValue(groupId, out var stats))
+        {
+            stats = new LifeStats();
+            _stats[groupId] = stats;
+        }
+        return stats;
+    }
+
+    private void TrackPeakMass()
+    {
+        foreach (var group in _players.Values.GroupBy(p => p.GroupId))
+        {
+            var stats = StatsOf(group.Key);
+            stats.PeakMass = MathF.Max(stats.PeakMass, group.Sum(p => p.Mass));
+        }
+    }
+
+    /// <summary>Queues the end of a life: <paramref name="piece"/> is (any) piece of the player whose life ended.</summary>
+    private void RecordDeath(PlayerEntity piece, DeathReason reason, string killerName)
+    {
+        var stats = StatsOf(piece.GroupId);
+        // The peak is only sampled at the end of each tick, so also count what they hold right now
+        // (they may have grown and died within the same tick).
+        float peak = MathF.Max(stats.PeakMass, _players.Values.Where(p => p.GroupId == piece.GroupId).Sum(p => p.Mass));
+        _deaths.Add(new DeathInfo(
+            piece.GroupId, piece.Name, piece.EndPoint, reason, killerName,
+            peak, (float)(DateTime.UtcNow - stats.StartUtc).TotalSeconds,
+            stats.FoodEaten, stats.BlobsEaten, stats.SpikesHit));
+    }
+
+    /// <summary>Hands over (and forgets) every life that ended since the last call.</summary>
+    public List<DeathInfo> DrainDeaths()
+    {
+        lock (_gate)
+        {
+            var copy = new List<DeathInfo>(_deaths);
+            _deaths.Clear();
+            return copy;
+        }
+    }
+
+    // ---- Power-ups --------------------------------------------------------------------------
+
+    /// <summary>A cell touching an active pickup collects it: the effect goes to the whole player
+    /// group (or just the bot), and the pickup goes dormant then reappears elsewhere.</summary>
+    private void ResolvePowerups()
+    {
+        var now = DateTime.UtcNow;
+        var cfg = GameConfig.Current;
+
+        foreach (var powerup in _powerups.Values)
+        {
+            if (!powerup.IsActive(now)) continue;
+
+            foreach (var e in ActiveBlobs())
+            {
+                if (Vector2.Distance(e.Position, powerup.Position) > (e.Scale + powerup.Scale) / 2f) continue;
+
+                GrantPowerup(e, powerup.Kind, now.AddSeconds(cfg.PowerupSeconds));
+                powerup.RespawnAtUtc = now.AddSeconds(cfg.PowerupRespawnSeconds);
+                powerup.Position = RandomPosition();
+                break;
+            }
+        }
+    }
+
+    private void GrantPowerup(Entity collector, PowerupKind kind, DateTime until)
+    {
+        IEnumerable<Entity> recipients = collector is PlayerEntity p
+            ? _players.Values.Where(x => x.GroupId == p.GroupId)
+            : new[] { collector };
+
+        foreach (var e in recipients)
+        {
+            switch (kind)
+            {
+                case PowerupKind.Speed: e.SpeedBoostUntil = until; break;
+                case PowerupKind.Shield: e.ShieldUntil = until; break;
+                default: e.MagnetUntil = until; break;
+            }
         }
     }
 
@@ -564,7 +720,10 @@ public sealed class GameWorld
             if (dir != Vector2.Zero)
             {
                 if (dir.LengthSquared() > 1f) dir = Vector2.Normalize(dir);
-                delta = dir * Rules.MovementSpeedForMass(e.Mass) * dt;
+                float speed = Rules.MovementSpeedForMass(e.Mass);
+                if (e.HasSpeedBoost(now)) speed *= GameConfig.Current.SpeedBoostMultiplier;
+                if (e is AiEntity) speed *= Rules.BotSpeedFactor(GameConfig.Current.BotDifficulty);
+                delta = dir * speed * dt;
             }
 
             // The launch is added ON TOP of steering (not instead of it): a thrown piece stays
@@ -662,7 +821,7 @@ public sealed class GameWorld
 
             foreach (var piece in _players.Values)
             {
-                if (piece.AbsorbInto != null || piece.Scale <= hazard.Scale) continue;
+                if (piece.AbsorbInto != null || piece.Scale <= hazard.Scale || piece.HasShield(now)) continue;
                 if (now - piece.LastSawHitUtc < cooldown) continue;
                 if (Vector2.Distance(piece.Position, hazard.Position) > (piece.Scale + hazard.Scale) / 2f) continue;
 
@@ -674,7 +833,7 @@ public sealed class GameWorld
             {
                 foreach (var bot in _bots.Values)
                 {
-                    if (bot.Scale <= hazard.Scale) continue;
+                    if (bot.Scale <= hazard.Scale || bot.HasShield(now)) continue;
                     if (now - bot.LastSawHitUtc < cooldown) continue;
                     if (Vector2.Distance(bot.Position, hazard.Position) > (bot.Scale + hazard.Scale) / 2f) continue;
 
@@ -697,6 +856,7 @@ public sealed class GameWorld
         int pellets = SpikePelletBudget(piece.Mass);
         float each = Math.Max(Rules.MassMin, (piece.Mass - pellets * Rules.FoodMassGain) / total);
         var mergeAt = now + RollMergeTime();
+        StatsOf(piece.GroupId).SpikesHit++;
 
         piece.Mass = each;
         piece.LastSawHitUtc = now;
@@ -841,24 +1001,24 @@ public sealed class GameWorld
         _foodChangedThisTick.Add(pellet);
     }
 
-    /// <summary>An ejected pellet (EjectDirection != zero) that reaches a saw feeds it instead of
-    /// respawning as ordinary food. Every FeedThreshold feeds (randomized 2-4, re-rolled after
-    /// each trigger), the saw launches a brand new saw a good distance away in the direction that
-    /// feed was thrown from - mirrors agar.io's virus-feeding mechanic. Capped so repeated feeding
-    /// can't grow the saw population without bound.</summary>
-    private void ResolveSawFeeding()
+    /// <summary>An ejected pellet (EjectDirection != zero) that reaches a spike (saw or virus) feeds it
+    /// instead of respawning as ordinary food. Every FeedThreshold feeds (randomized 2-4, re-rolled
+    /// after each trigger), the spike launches a brand new one of its own kind a good distance away
+    /// in the direction that feed was thrown from - mirrors agar.io's virus-feeding mechanic. Capped
+    /// per kind so repeated feeding can't grow the population without bound.</summary>
+    private void ResolveHazardFeeding()
     {
-        // Snapshot first: SpawnSawAt below adds to _saws mid-loop, which would otherwise
-        // invalidate this enumerator (unlike the pop methods, we don't break - every saw should
+        // Snapshot first: spawning below adds to _saws/_viruses mid-loop, which would otherwise
+        // invalidate the enumerators (unlike the pop methods, we don't break - every spike should
         // still get a chance to feed in the same tick).
-        foreach (var saw in _saws.Values.ToList())
+        foreach (var spike in _saws.Values.Cast<SpikeEntity>().Concat(_viruses.Values).ToList())
         {
             FoodItem? fed = null;
             foreach (var food in _food.Values)
             {
                 if (food.EjectDirection == Vector2.Zero) continue;
-                float dist = Vector2.Distance(food.Position, saw.Position);
-                if (dist > saw.Scale / 2f + FoodItem.Radius) continue;
+                float dist = Vector2.Distance(food.Position, spike.Position);
+                if (dist > spike.Scale / 2f + FoodItem.Radius) continue;
                 fed = food;
                 break;
             }
@@ -871,15 +1031,22 @@ public sealed class GameWorld
             fed.EjectDirection = Vector2.Zero;
             _foodChangedThisTick.Add(fed);
 
-            saw.FeedCount++;
-            if (saw.FeedCount < saw.FeedThreshold) continue;
+            spike.FeedCount++;
+            if (spike.FeedCount < spike.FeedThreshold) continue;
 
-            saw.FeedCount = 0;
-            saw.FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1);
+            spike.FeedCount = 0;
+            spike.FeedThreshold = _rng.Next(Rules.SawFeedThresholdMin, Rules.SawFeedThresholdMax + 1);
 
-            if (_saws.Count >= SawCount * Rules.SawMaxCountMultiplier) continue;
             var dir = launchDir.LengthSquared() > 0.0001f ? Vector2.Normalize(launchDir) : RandomUnitVector();
-            SpawnSawAt(saw.Position + dir * Rules.SawFeedLaunchDistance);
+            var target = spike.Position + dir * Rules.SawFeedLaunchDistance;
+            if (spike is SawEntity)
+            {
+                if (_saws.Count < SawCount * Rules.SpikeMaxCountMultiplier) SpawnSawAt(target);
+            }
+            else if (_viruses.Count < VirusCount * Rules.SpikeMaxCountMultiplier)
+            {
+                SpawnVirusAt(target);
+            }
         }
     }
 
@@ -1022,42 +1189,46 @@ public sealed class GameWorld
         return grid;
     }
 
+    private const int MagnetEatsPerTick = 4;
+
     private void ResolveFoodEating()
     {
         var grid = BuildFoodGrid();
+        var now = DateTime.UtcNow;
+        var cfg = GameConfig.Current;
 
         foreach (var e in ActiveBlobs())
         {
-            float eatRadius = e.Scale / 2f + FoodItem.Radius;
+            // A magnetised cell reaches much farther and can swallow several pellets a tick;
+            // everyone else eats at most one (plenty at 30 ticks a second).
+            bool magnet = e.HasMagnet(now);
+            float eatRadius = (e.Scale / 2f + FoodItem.Radius) * (magnet ? cfg.MagnetRadiusMultiplier : 1f);
+            int budget = magnet ? MagnetEatsPerTick : 1;
             int ring = Math.Max(1, (int)MathF.Ceiling(eatRadius / FoodGridCellSize));
             var (cx, cy) = CellOf(e.Position);
 
-            FoodItem? eaten = null;
-            for (int dx = -ring; dx <= ring && eaten == null; dx++)
+            int eaten = 0;
+            for (int dx = -ring; dx <= ring && eaten < budget; dx++)
             {
-                for (int dy = -ring; dy <= ring && eaten == null; dy++)
+                for (int dy = -ring; dy <= ring && eaten < budget; dy++)
                 {
                     if (!grid.TryGetValue((cx + dx, cy + dy), out var bucket)) continue;
 
                     foreach (var food in bucket)
                     {
                         if (food.EatImmunity > 0f) continue;
-                        if (Vector2.Distance(e.Position, food.Position) < eatRadius)
-                        {
-                            eaten = food;
-                            break; // one food per entity per tick is plenty
-                        }
+                        if (Vector2.Distance(e.Position, food.Position) >= eatRadius) continue;
+
+                        e.Mass = Rules.ClampMass(e.Mass + Rules.FoodMassGain);
+                        food.Position = RandomPosition();
+                        food.Velocity = Vector2.Zero;
+                        food.EjectDirection = Vector2.Zero;
+                        _foodChangedThisTick.Add(food);
+                        if (e is PlayerEntity p) StatsOf(p.GroupId).FoodEaten++;
+
+                        if (++eaten >= budget) break;
                     }
                 }
-            }
-
-            if (eaten != null)
-            {
-                e.Mass = Rules.ClampMass(e.Mass + Rules.FoodMassGain);
-                eaten.Position = RandomPosition();
-                eaten.Velocity = Vector2.Zero;
-                eaten.EjectDirection = Vector2.Zero;
-                _foodChangedThisTick.Add(eaten);
             }
         }
     }
@@ -1071,6 +1242,7 @@ public sealed class GameWorld
     /// gate is unchanged from before.</summary>
     private void ResolveBlobEating(float dt)
     {
+        var now = DateTime.UtcNow;
         var all = ActiveBlobs().ToList();
         for (int i = 0; i < all.Count; i++)
         {
@@ -1092,8 +1264,9 @@ public sealed class GameWorld
                 // permanent for that batch rather than time-limited.
                 if (a is AiEntity aa && b is AiEntity ab && aa.PopBatchId != 0 && aa.PopBatchId == ab.PopBatchId) continue;
 
-                bool aEatsB = Rules.CanEat(a.Scale, b.Scale);
-                bool bEatsA = Rules.CanEat(b.Scale, a.Scale);
+                // A shielded cell can't be eaten: it and its would-be eater just block each other.
+                bool aEatsB = Rules.CanEat(a.Scale, b.Scale) && !b.HasShield(now);
+                bool bEatsA = Rules.CanEat(b.Scale, a.Scale) && !a.HasShield(now);
 
                 if (aEatsB || bEatsA)
                 {
@@ -1125,6 +1298,7 @@ public sealed class GameWorld
     private void Devour(Entity winner, Entity loser)
     {
         winner.Mass = Rules.ClampMass(winner.Mass + loser.Mass);
+        if (winner is PlayerEntity eater) StatsOf(eater.GroupId).BlobsEaten++;
 
         // A losing split piece is just removed if its group still has other pieces alive -
         // "respawn in place" only makes sense for the group's very last remaining piece (an
@@ -1136,6 +1310,8 @@ public sealed class GameWorld
             return;
         }
 
+        // The last cell of a player: that's a death (the game loop tells them who did it).
+        if (loser is PlayerEntity dead) RecordDeath(dead, DeathReason.Eaten, winner.Name);
         RespawnAsNew(loser);
     }
 
@@ -1175,6 +1351,8 @@ public sealed class GameWorld
         {
             lp.GroupId = lp.Id;
             lp.MergeEligibleUtc = DateTime.MinValue;
+            lp.SpeedBoostUntil = lp.ShieldUntil = lp.MagnetUntil = DateTime.MinValue;
+            _stats[lp.GroupId] = new LifeStats { PeakMass = Rules.MassMin };
         }
     }
 
@@ -1222,6 +1400,19 @@ public sealed class GameWorld
     public IReadOnlyCollection<SawEntity> Saws
     {
         get { lock (_gate) { return _saws.Values.ToArray(); } }
+    }
+
+    /// <summary>Power-ups currently lying on the map (dormant, just-collected ones excluded).</summary>
+    public IReadOnlyCollection<PowerupEntity> Powerups
+    {
+        get
+        {
+            lock (_gate)
+            {
+                var now = DateTime.UtcNow;
+                return _powerups.Values.Where(p => p.IsActive(now)).ToArray();
+            }
+        }
     }
 
     public IReadOnlyCollection<FoodItem> AllFood()

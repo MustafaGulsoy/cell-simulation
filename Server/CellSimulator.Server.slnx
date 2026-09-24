@@ -1,4 +1,5 @@
 <Solution>
+  <Project Path="CellSimulator.LoadBot/CellSimulator.LoadBot.csproj" />
   <Project Path="CellSimulator.Server.Tests/CellSimulator.Server.Tests.csproj" />
   <Project Path="CellSimulator.Server/CellSimulator.Server.csproj" />
 </Solution>

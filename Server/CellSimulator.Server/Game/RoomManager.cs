@@ -43,6 +43,17 @@ public sealed class RoomManager
         }
     }
 
+    /// <summary>How many live sessions come from this source address (for the per-IP cap).</summary>
+    public int SessionsFromAddress(IPAddress address)
+    {
+        int count = 0;
+        foreach (var endPoint in _roomByEndpoint.Keys)
+        {
+            if (endPoint.Address.Equals(address)) count++;
+        }
+        return count;
+    }
+
     public bool TryGetRoom(IPEndPoint endPoint, out Room room) => _roomByEndpoint.TryGetValue(endPoint, out room!);
 
     /// <summary>Ticks every active room, drops stale sessions, and closes any room that's now empty.</summary>
@@ -71,7 +82,7 @@ public sealed class RoomManager
                     if (!stale.Equals(default(KeyValuePair<IPEndPoint, uint>)))
                     {
                         room.Sessions.TryRemove(stale.Key, out _);
-                        room.ViewZoom.TryRemove(stale.Key, out _);
+                        room.State.TryRemove(stale.Key, out _);
                         _roomByEndpoint.TryRemove(stale.Key, out _);
                     }
                 }

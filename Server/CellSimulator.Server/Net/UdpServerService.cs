@@ -13,6 +13,8 @@ public sealed class UdpServerService : BackgroundService
     private readonly RoomManager _rooms;
     private readonly ILogger<UdpServerService> _logger;
     private readonly int _port;
+    private readonly AbuseGuard _guard;
+    private DateTime _lastPrune = DateTime.UtcNow;
 
     public UdpClient Socket { get; }
 
@@ -21,6 +23,11 @@ public sealed class UdpServerService : BackgroundService
         _rooms = rooms;
         _logger = logger;
         _port = config.GetValue("Server:UdpPort", 7778);
+        _guard = new AbuseGuard(
+            config.GetValue("Server:MaxPacketBytes", 512),
+            config.GetValue("Server:PacketsPerSecond", 200),
+            config.GetValue("Server:JoinsPerMinutePerIp", 20),
+            config.GetValue("Server:MaxSessionsPerIp", 30));
         Socket = new UdpClient(_port);
     }
 
@@ -45,6 +52,19 @@ public sealed class UdpServerService : BackgroundService
 
             // One bad packet (or a failed send to a vanished peer) must never take the whole
             // listener down - an unhandled exception here stops the host for every room.
+            var now = DateTime.UtcNow;
+            ServerMetrics.PacketIn();
+            if (!_guard.AllowPacket(result.RemoteEndPoint, result.Buffer.Length, now))
+            {
+                ServerMetrics.PacketRejected();
+                continue;
+            }
+            if (now - _lastPrune > TimeSpan.FromMinutes(1))
+            {
+                _lastPrune = now;
+                _guard.Prune(now);
+            }
+
             try
             {
                 HandlePacket(result.Buffer, result.RemoteEndPoint);
@@ -72,14 +92,32 @@ public sealed class UdpServerService : BackgroundService
                     break;
                 }
 
+                if (!_guard.AllowJoin(from.Address, _rooms.SessionsFromAddress(from.Address), DateTime.UtcNow))
+                {
+                    ServerMetrics.JoinRejected();
+                    break; // silent: the client just keeps retrying, and stops costing us anything once its window passes
+                }
+
                 var room = _rooms.JoinOrCreateRoom(from, join.MapSize);
-                var player = room.World.AddPlayer(join.Username, from);
+                var player = room.World.AddPlayer(join.Username, from, join.PreferredColor);
                 room.Sessions[from] = player.Id;
+                room.State[from] = new SessionState { ClientVersion = join.ClientVersion };
+                ServerMetrics.Join();
                 SendWelcome(room, player.Id, from);
 
                 _logger.LogInformation("Player {Name} joined room {RoomId} as {Id} from {EndPoint}",
                     player.Name, room.Id, player.Id, from);
                 break;
+
+            case ClientMsg.Ping:
+            {
+                // Echo the client's timestamp so it can measure round-trip time (5 bytes each way: no amplification).
+                var pong = new byte[5];
+                pong[0] = (byte)ServerMsg.Pong;
+                Buffer.BlockCopy(data, 1, pong, 1, 4);
+                Socket.Send(pong, pong.Length, from);
+                break;
+            }
 
             case ClientMsg.Input:
                 if (_rooms.TryGetRoom(from, out var existingRoom) && existingRoom.Sessions.TryGetValue(from, out var id))

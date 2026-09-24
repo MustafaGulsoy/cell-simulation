@@ -14,6 +14,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Unity client's own snapshot decoder (plain C#, no UnityEngine): compiled into the tests so the
+         wire format is verified against the real client code, not a copy. -->
+    <Compile Include="..\..\Assets\_Scripts\Game\SnapshotDecoder.cs" Link="ClientCode\SnapshotDecoder.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\CellSimulator.Server\CellSimulator.Server.csproj" />
   </ItemGroup>
 

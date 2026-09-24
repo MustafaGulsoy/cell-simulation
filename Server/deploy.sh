@@ -2,7 +2,7 @@
 # Deploys the game server to the VPS: runs the tests, ships the source, builds the image on the
 # box, swaps the container, health-checks it, and rolls back to the previous image if it's unhealthy.
 # Usage: Server/deploy.sh [user@host]        (default root@69.62.120.208, key-based ssh)
-# Manual rollback: ssh HOST 'docker rm -f cellsimulator-server && docker run -d --name cellsimulator-server --restart unless-stopped -p 7778:7778/udp -p 127.0.0.1:5283:5000 cellsimulator-server:previous'
+# Manual rollback: ssh HOST 'docker rm -f cellsimulator-server && docker run -d --name cellsimulator-server --restart unless-stopped -p 7778:7778/udp -p 127.0.0.1:5283:5000 -v cellsim-data:/data cellsimulator-server:previous'
 set -euo pipefail
 
 HOST=${1:-root@69.62.120.208}
@@ -14,7 +14,7 @@ dotnet test -c Release --nologo -v q # never ship a red build
 read -r -d '' REMOTE <<'EOF' || true
 set -euo pipefail
 NAME=cellsimulator-server
-RUN="docker run -d --name $NAME --restart unless-stopped -p 7778:7778/udp -p 127.0.0.1:5283:5000"
+RUN="docker run -d --name $NAME --restart unless-stopped -p 7778:7778/udp -p 127.0.0.1:5283:5000 -v cellsim-data:/data"
 
 rm -rf /tmp/cellsim-build && mkdir /tmp/cellsim-build
 tar -xzf - -C /tmp/cellsim-build

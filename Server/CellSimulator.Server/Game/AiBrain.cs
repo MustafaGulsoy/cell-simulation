@@ -5,7 +5,8 @@ namespace CellSimulator.Server.Game;
 /// <summary>Ported from AIMovement/AIRange - simple distance-based roam/chase/flee FSM, no physics.</summary>
 public static class AiBrain
 {
-    private const float SenseRange = 40f;
+    // How far a bot notices things depends on GameConfig.BotDifficulty (Easy 28 / Normal 40 / Hard 60).
+    private static float SenseRange => Rules.BotSenseRange(GameConfig.Current.BotDifficulty);
     private const float RoamArriveDist = 5f;
 
     // How much farther than SenseRange a locked-on threat/target may drift before we drop it.
@@ -27,6 +28,32 @@ public static class AiBrain
                 return;
             }
             bot.ThreatId = null;
+        }
+
+        // A spike that would pop this bot is a hazard to steer around - checked before hunting, so a
+        // bot doesn't chase prey straight into a virus. (Easy bots don't bother.)
+        if (Rules.BotAvoidsSpikes(GameConfig.Current.BotDifficulty))
+        {
+            Entity? nearestSpike = null;
+            float nearestGap = float.MaxValue;
+            foreach (var hazard in world.Hazards)
+            {
+                if (bot.Scale <= hazard.Scale) continue; // too small to be popped: harmless
+                float gap = Vector2.Distance(bot.Position, hazard.Position) - (bot.Scale + hazard.Scale) / 2f;
+                if (gap < Rules.BotSpikeAvoidMargin && gap < nearestGap)
+                {
+                    nearestGap = gap;
+                    nearestSpike = hazard;
+                }
+            }
+
+            if (nearestSpike != null)
+            {
+                bot.State = AiState.Running;
+                bot.TargetId = null;
+                bot.MoveDirection = SafeDirection(bot.Position - nearestSpike.Position);
+                return;
+            }
         }
 
         if (bot.TargetId.HasValue)

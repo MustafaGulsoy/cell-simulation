@@ -13,6 +13,8 @@ namespace CellSimulator.Server.Net;
 /// entities leaving view simply vanish off-screen and reappear when they come back.
 /// Food changes are NOT culled: the client only ever hears about a pellet's position when it
 /// changes, so skipping an update would strand a ghost pellet at its old spot.
+/// Clients announcing protocol version 2+ additionally get the compact snapshot format and the
+/// power-ups; older clients get the original format without anything they can't draw.
 /// </summary>
 public static class InterestManager
 {
@@ -37,6 +39,47 @@ public static class InterestManager
         return MathF.Max(forPrimary, extent * 1.4f);
     }
 
+    /// <summary>What one viewer can see, nearest first (own pieces always first), and the point its
+    /// camera is centred on.</summary>
+    private static (List<(Entity Entity, float Distance)> Candidates, int OwnCount, Vector2 Centre) SelectVisible(
+        uint sessionId, IReadOnlyList<Entity> everything, bool includePowerups, ref float orthoState, float dt)
+    {
+        var own = new List<PlayerEntity>();
+        foreach (var e in everything)
+        {
+            if (e is PlayerEntity p && p.GroupId == sessionId) own.Add(p);
+        }
+
+        bool Allowed(Entity e) => includePowerups || e.Type != EntityType.Powerup;
+
+        // Unknown viewer (shouldn't happen for a live session): fall back to the size-capped full view.
+        if (own.Count == 0)
+        {
+            return (everything.Where(Allowed).Select(e => (e, 0f)).ToList(), 0, Vector2.Zero);
+        }
+
+        float totalMass = own.Sum(p => p.Mass);
+        var centre = Vector2.Zero;
+        foreach (var p in own) centre += p.Position * (p.Mass / totalMass);
+        float extent = own.Max(p => Vector2.Distance(centre, p.Position) + p.Scale / 2f);
+
+        float wanted = WantedOrthoSize(own, centre, extent);
+        orthoState = orthoState <= 0f ? wanted : MathF.Max(wanted, orthoState - orthoState * OrthoDecayPerSecond * dt);
+        float radius = orthoState * ScreenReachPerOrtho + ViewMargin;
+
+        var candidates = new List<(Entity Entity, float Distance)>(everything.Count);
+        foreach (var e in everything)
+        {
+            if (!Allowed(e)) continue;
+            bool isOwn = e is PlayerEntity p && p.GroupId == sessionId;
+            float distance = isOwn ? float.MinValue : Vector2.Distance(centre, e.Position) - e.Scale / 2f;
+            if (isOwn || distance <= radius) candidates.Add((e, distance));
+        }
+        candidates.Sort((a, b) => a.Distance.CompareTo(b.Distance)); // own pieces first, then nearest first
+        return (candidates, own.Count, centre);
+    }
+
+    /// <summary>Original-format snapshot (what pre-version-2 clients understand), culled to the viewer.</summary>
     public static byte[] Encode(
         uint tick,
         uint sessionId,
@@ -46,46 +89,55 @@ public static class InterestManager
         ref float orthoState,
         float dt)
     {
-        var own = new List<PlayerEntity>();
-        foreach (var e in everything)
-        {
-            if (e is PlayerEntity p && p.GroupId == sessionId) own.Add(p);
-        }
-
-        // Unknown viewer (shouldn't happen for a live session): fall back to the size-capped full view.
-        List<(Entity Entity, float Distance)> candidates;
-        if (own.Count == 0)
-        {
-            candidates = everything.Select(e => (e, 0f)).ToList();
-        }
-        else
-        {
-            float totalMass = own.Sum(p => p.Mass);
-            var centre = Vector2.Zero;
-            foreach (var p in own) centre += p.Position * (p.Mass / totalMass);
-            float extent = own.Max(p => Vector2.Distance(centre, p.Position) + p.Scale / 2f);
-
-            float wanted = WantedOrthoSize(own, centre, extent);
-            orthoState = orthoState <= 0f ? wanted : MathF.Max(wanted, orthoState - orthoState * OrthoDecayPerSecond * dt);
-            float radius = orthoState * ScreenReachPerOrtho + ViewMargin;
-
-            candidates = new List<(Entity, float)>(everything.Count);
-            foreach (var e in everything)
-            {
-                bool isOwn = e is PlayerEntity p && p.GroupId == sessionId;
-                float distance = isOwn ? float.MinValue : Vector2.Distance(centre, e.Position) - e.Scale / 2f;
-                if (isOwn || distance <= radius) candidates.Add((e, distance));
-            }
-            candidates.Sort((a, b) => a.Distance.CompareTo(b.Distance)); // own pieces first, then nearest first
-        }
+        var (candidates, ownCount, _) = SelectVisible(sessionId, everything, includePowerups: false, ref orthoState, dt);
 
         // Fit the MTU budget: shed the farthest entities (never the viewer's own) until it does.
         int keep = candidates.Count;
         while (true)
         {
             var packet = Protocol.EncodeSnapshot(tick, candidates.Take(keep).Select(c => c.Entity).ToList(), changedFood, leaderboard);
-            if (packet.Length <= MaxPacketBytes || keep <= own.Count) return packet;
-            keep = Math.Max(own.Count, keep * 3 / 4);
+            if (packet.Length <= MaxPacketBytes || keep <= ownCount) return packet;
+            keep = Math.Max(ownCount, keep * 3 / 4);
+        }
+    }
+
+    /// <summary>The snapshot to send this session this tick: the compact format for version-2 clients
+    /// (power-ups included), the original culled format otherwise. Updates the session's zoom and
+    /// "already told you this entity's name" bookkeeping.</summary>
+    public static byte[] EncodeFor(
+        uint tick,
+        uint sessionId,
+        SessionState session,
+        IReadOnlyList<Entity> everything,
+        IReadOnlyCollection<FoodItem> changedFood,
+        List<(string Name, float Mass)> leaderboard,
+        float halfWidth,
+        float halfHeight,
+        float dt)
+    {
+        float zoom = session.ViewZoom;
+
+        if (session.ClientVersion < 2)
+        {
+            var legacy = Encode(tick, sessionId, everything, changedFood, leaderboard, ref zoom, dt);
+            session.ViewZoom = zoom;
+            return legacy;
+        }
+
+        var (candidates, ownCount, centre) = SelectVisible(sessionId, everything, includePowerups: true, ref zoom, dt);
+        session.ViewZoom = zoom;
+
+        int keep = candidates.Count;
+        while (true)
+        {
+            var visible = candidates.Take(keep).Select(c => c.Entity).ToList();
+            var packet = Protocol.EncodeSnapshotV2(tick, visible, changedFood, leaderboard, centre, session, halfWidth, halfHeight);
+            if (packet.Length <= MaxPacketBytes || keep <= ownCount)
+            {
+                Protocol.MarkSent(tick, visible, session);
+                return packet;
+            }
+            keep = Math.Max(ownCount, keep * 3 / 4);
         }
     }
 }
