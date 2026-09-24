@@ -52,7 +52,7 @@ public class LeaderboardPanel : MonoBehaviour
         }
 
         body = RuntimeUi.Label("Body", card.transform, "", 26f, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -132f), new Vector2(580f, 400f), TextAlignmentOptions.TopLeft);
-        body.enableWordWrapping = false;
+        body.textWrappingMode = TextWrappingModes.NoWrap;
 
         var close = RuntimeUi.ButtonWithLabel("Close", card.transform, "Close", 26f, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 14f), new Vector2(200f, 54f), new Color(0.5f, 0.2f, 0.2f, 1f));
         close.onClick.AddListener(delegate { panel.SetActive(false); GameAudio.Play("click"); });

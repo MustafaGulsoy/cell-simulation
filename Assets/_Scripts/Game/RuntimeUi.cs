@@ -62,7 +62,7 @@ public static class RuntimeUi
         tmp.fontSize = fontSize;
         tmp.color = TextColor;
         tmp.alignment = alignment;
-        tmp.enableWordWrapping = true;
+        tmp.textWrappingMode = TextWrappingModes.Normal;
         tmp.raycastTarget = false;
         return tmp;
     }
@@ -76,7 +76,7 @@ public static class RuntimeUi
         button.targetGraphic = img;
 
         var text = Label("Label", img.transform, label, fontSize, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, size, TextAlignmentOptions.Center);
-        text.enableWordWrapping = false;
+        text.textWrappingMode = TextWrappingModes.NoWrap;
         return button;
     }
 

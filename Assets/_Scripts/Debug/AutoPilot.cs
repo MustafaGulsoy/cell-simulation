@@ -28,7 +28,7 @@ public class AutoPilot : MonoBehaviour
             if (args[i] == "-autopilot") mode = args[i + 1];
             if (args[i] == "-shots") dir = args[i + 1];
         }
-        if (mode == null || FindObjectOfType<AutoPilot>() != null)
+        if (mode == null || FindAnyObjectByType<AutoPilot>() != null)
         {
             return;
         }
