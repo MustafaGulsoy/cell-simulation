@@ -81,6 +81,22 @@ public class PlayerBlob : MonoBehaviour
         if (ejectButton != null) ejectButton.onClick.AddListener(() => GameClient.instance?.SendEject());
     }
 
+    // The prefab's big number under the name ("Blob Level") is a leftover placeholder that nothing ever
+    // updated, so every blob showed a constant 1000. It now shows the blob's real mass; the small
+    // duplicate ("Blob Score") is hidden.
+    private TextMeshProUGUI massLabel;
+
+    private void BindLabels()
+    {
+        if (massLabel != null || blobDetailCanvas == null) return;
+
+        foreach (var text in blobDetailCanvas.GetComponentsInChildren<TextMeshProUGUI>(true))
+        {
+            if (text.gameObject.name == "Blob Level") massLabel = text;
+        }
+        if (playerHud != null && playerHud.blobScore != null) playerHud.blobScore.gameObject.SetActive(false);
+    }
+
     public void Init(uint id, bool mine, string name)
     {
         entityId = id;
@@ -106,7 +122,23 @@ public class PlayerBlob : MonoBehaviour
             playerHud.setIdleCanvasActivity(false);
             playerHud.setPlayingCanvasActivity(false);
             virtualCamera.gameObject.SetActive(false);
+            playerHud.ShowRemoteLabels(name);
         }
+    }
+
+    private EffectRing effectRing;
+    public byte currentEffects;
+
+    /// <summary>Shows/hides the glow for this blob's active power-up effects (bitmask from the server).</summary>
+    public void SetEffects(byte mask)
+    {
+        currentEffects = mask;
+        if (effectRing == null)
+        {
+            if (mask == 0) return;
+            effectRing = EffectRing.Attach(transform);
+        }
+        effectRing.Set(mask);
     }
 
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
@@ -127,6 +159,8 @@ public class PlayerBlob : MonoBehaviour
         }
 
         currentMass = mass;
+        BindLabels();
+        if (massLabel != null) massLabel.SetText(mass.ToString("0"));
 
         if (!Mathf.Approximately(currentScale, scale))
         {
@@ -141,13 +175,21 @@ public class PlayerBlob : MonoBehaviour
             UpdateOrderLayer((int)scale);
             UpdateOrthographicSize(scale);
 
-            if (poppedSmaller) PlayPopAnimation();
+            if (poppedSmaller)
+            {
+                PlayPopAnimation();
+                if (isMine) GameAudio.Play("split", 0.9f);
+            }
         }
 
         if (isMine)
         {
             playerHud.setBlobScoreText(mass);
             playerHud.setScoreCounterText(mass);
+        }
+        else
+        {
+            playerHud.setBlobScoreText(mass);
         }
     }
 

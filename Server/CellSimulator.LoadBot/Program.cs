@@ -164,6 +164,8 @@ static async Task RunBot(int index, IPEndPoint server, BotStats st, Cancellation
                         var snap = decoder.Decode(d);
                         st.Snapshots++; st.SnapshotBytes += d.Length; st.MaxSnapshotBytes = Math.Max(st.MaxSnapshotBytes, d.Length);
                         st.PowerupsSeen += snap.Entities.Count(e => e.Type == 4);
+                        foreach (var f in snap.Food) foodSeen.Add(f.Id);   // the rolling refresh delivers pellets the join dump missed
+                        st.FoodReceived = foodSeen.Count;
                     }
                     catch (EndOfStreamException) { st.DecodeErrors++; }
                     break;

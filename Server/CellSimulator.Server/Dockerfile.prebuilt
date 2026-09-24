@@ -1,0 +1,14 @@
+# Used by deploy.sh: the app is published on the developer machine and only the finished output is shipped,
+# so the (busy, shared) server never has to download the 800 MB .NET SDK image or compile anything.
+# Keep the runtime settings below in sync with Dockerfile.
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+WORKDIR /app
+COPY publish/ .
+ENV ASPNETCORE_URLS=http://0.0.0.0:5000
+EXPOSE 5000/tcp
+EXPOSE 7778/udp
+ENV Server__DataDir=/data
+RUN mkdir -p /data && chown $APP_UID:$APP_UID /data
+VOLUME /data
+USER $APP_UID
+ENTRYPOINT ["dotnet", "CellSimulator.Server.dll"]

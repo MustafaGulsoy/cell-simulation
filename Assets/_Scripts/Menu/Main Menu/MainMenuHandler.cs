@@ -29,7 +29,20 @@ public class MainMenuHandler : MonoBehaviour
     // actually act on it). Left unassigned, this is simply a no-op like serverIpInput's guard.
     [SerializeField] private Toggle nightModeToggle;
 
+    // Extras built in code (no scene edits): colour picker and the Top players button. Anchors are
+    // screen fractions; nudge these constants to fit the menu layout.
+    private static readonly Vector2 SkinAnchor = new Vector2(0.5f, 0f);
+    private static readonly Vector2 SkinOffset = new Vector2(0f, 60f);
+    private static readonly Vector2 TopAnchor = new Vector2(0.5f, 0f);
+    private static readonly Vector2 TopOffset = new Vector2(0f, 300f);
+
     private void Awake() {
+        GameAudio.ApplySavedVolume();
+
+        var extras = RuntimeUi.CreateCanvas("MenuExtras", 30);
+        SkinPicker.Build(extras.transform, SkinAnchor, new Vector2(0.5f, 0f), SkinOffset);
+        LeaderboardPanel.Create(extras.transform, TopAnchor, new Vector2(0.5f, 0f), TopOffset);
+
         // Server address is fixed - players never see or edit it.
         if(serverIpInput != null)
         {

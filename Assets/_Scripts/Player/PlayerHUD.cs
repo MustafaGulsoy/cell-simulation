@@ -98,6 +98,18 @@ public class PlayerHUD : MonoBehaviour
         scoreCounter.gameObject.SetActive(true);
     }
 
+    /// <summary>Name and score label under a blob that ISN'T the local player's (other players, and the
+    /// extra pieces of a split player). Without this they showed the prefab's placeholder text.</summary>
+    public void ShowRemoteLabels(string username)
+    {
+        bool hasUsername = !string.IsNullOrEmpty(username);
+        blobScore.rectTransform.localPosition = hasUsername ? Utils.scoreWithNamePosition : Utils.scoreNoNamePosition;
+
+        blobName.text = username;
+        blobName.gameObject.SetActive(hasUsername);
+        blobScore.gameObject.SetActive(true);
+    }
+
     public void setScoreCounterText(float score)
     {
         scoreCounter.SetText(string.Format("Score: {0}", score.ToString("0")));
@@ -140,7 +152,7 @@ public class PlayerHUD : MonoBehaviour
     // There's no real spectator mode (the server respawns the same entity instantly, see
     // GameClient's death heuristic) - this is just a ~4s non-blocking recap of the life that just
     // ended, dismissible early by tapping it. The game keeps running underneath the whole time.
-    public void ShowMatchSummary(float massReached, float survivedSeconds, bool isNewRecord, List<string> newlyUnlockedAchievements)
+    public void ShowMatchSummary(float massReached, float survivedSeconds, bool isNewRecord, List<string> newlyUnlockedAchievements, string extraLine = null)
     {
         if (matchSummaryPanel == null)
         {
@@ -149,6 +161,7 @@ public class PlayerHUD : MonoBehaviour
 
         matchSummaryMassText.SetText(string.Format("Mass reached: {0}", massReached.ToString("0")));
         matchSummaryTimeText.SetText(string.Format("Survived: {0}", FormatTime(survivedSeconds)));
+        ShowExtraSummary(extraLine);
         matchSummaryRecordText.gameObject.SetActive(isNewRecord);
 
         bool hasNewAchievements = newlyUnlockedAchievements != null && newlyUnlockedAchievements.Count > 0;
@@ -162,6 +175,32 @@ public class PlayerHUD : MonoBehaviour
 
         if (matchSummaryHideCoroutine != null) StopCoroutine(matchSummaryHideCoroutine);
         matchSummaryHideCoroutine = StartCoroutine(HideMatchSummaryAfterDelay());
+    }
+
+    // Who ate you / XP earned: its own little card just under the summary panel, so the panel's
+    // authored layout isn't disturbed by extra lines.
+    private GameObject extraSummaryCard;
+    private TextMeshProUGUI extraSummaryText;
+
+    private void ShowExtraSummary(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+        {
+            if (extraSummaryCard != null) extraSummaryCard.SetActive(false);
+            return;
+        }
+
+        if (extraSummaryCard == null)
+        {
+            var parent = (RectTransform)matchSummaryPanel.transform;
+            // Above the panel: below it are the emoji buttons.
+            var card = RuntimeUi.Panel("ExtraSummary", parent, new Vector2(0.5f, 1f), new Vector2(0.5f, 0f), new Vector2(0f, 8f), new Vector2(parent.rect.width > 10f ? parent.rect.width : 780f, 150f), RuntimeUi.PanelColor);
+            extraSummaryText = RuntimeUi.Label("Text", card.transform, "", 34f, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(720f, 140f), TextAlignmentOptions.Center);
+            extraSummaryCard = card.gameObject;
+        }
+
+        extraSummaryText.text = text;
+        extraSummaryCard.SetActive(true);
     }
 
     private IEnumerator HideMatchSummaryAfterDelay()

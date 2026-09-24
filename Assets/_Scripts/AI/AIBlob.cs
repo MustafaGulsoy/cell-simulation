@@ -40,6 +40,19 @@ public class AIBlob : MonoBehaviour
         PlayPopAnimation();
     }
 
+    private EffectRing effectRing;
+
+    /// <summary>Shows/hides the glow for this bot's active power-up effects (bitmask from the server).</summary>
+    public void SetEffects(byte mask)
+    {
+        if (effectRing == null)
+        {
+            if (mask == 0) return;
+            effectRing = EffectRing.Attach(transform);
+        }
+        effectRing.Set(mask);
+    }
+
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
     {
         targetPosition = position;

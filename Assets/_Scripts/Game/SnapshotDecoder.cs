@@ -270,3 +270,28 @@ public struct DeathReport
         return d;
     }
 }
+
+/// <summary>The answer to a leaderboard request (ServerMsg.TopList).</summary>
+public sealed class TopList
+{
+    public byte Period;   // 0 day, 1 week, 2 all-time
+    public List<string> Names = new List<string>();
+    public List<float> Masses = new List<float>();
+    public List<float> Seconds = new List<float>();
+
+    /// <summary>Reads everything after the leading message-type byte.</summary>
+    public static TopList Decode(BinaryReader r)
+    {
+        var list = new TopList();
+        list.Period = r.ReadByte();
+        int count = r.ReadByte();
+        for (int i = 0; i < count; i++)
+        {
+            byte len = r.ReadByte();
+            list.Names.Add(Encoding.UTF8.GetString(r.ReadBytes(len)));
+            list.Masses.Add(r.ReadSingle());
+            list.Seconds.Add(r.ReadSingle());
+        }
+        return list;
+    }
+}

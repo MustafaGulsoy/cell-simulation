@@ -64,6 +64,22 @@ public class Food : MonoBehaviour
         }
     }
 
+    /// <summary>Puts a recycled pellet straight at a position (no slide, no pop) - FoodField reuses a
+    /// small pool of these for whichever pellets are currently near the camera.</summary>
+    public void Snap(Vector2 position)
+    {
+        if (popCoroutine != null)
+        {
+            StopCoroutine(popCoroutine);
+            popCoroutine = null;
+        }
+        punchScale = 1f;
+        targetPosition = position;
+        hasTargetPosition = true;
+        transform.position = position;
+        transform.localScale = Utils.foodScale;
+    }
+
     private void PlayPopAnimation()
     {
         if (popCoroutine != null) StopCoroutine(popCoroutine);

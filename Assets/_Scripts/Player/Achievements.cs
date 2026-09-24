@@ -21,6 +21,14 @@ public static class Achievements
         new Def { Id = "streak_3", Text = "3-Day Streak", Condition = d => d.currentStreak >= 3 },
         new Def { Id = "streak_7", Text = "7-Day Streak", Condition = d => d.currentStreak >= 7 },
         new Def { Id = "survive_300", Text = "5-Minute Survival", Condition = d => d.bestSurvivalSeconds >= 300f },
+        new Def { Id = "mass_5000", Text = "5000 Mass", Condition = d => d.bestMass >= 5000f },
+        new Def { Id = "games_10", Text = "10 Games", Condition = d => d.gamesPlayed >= 10 },
+        new Def { Id = "games_50", Text = "50 Games", Condition = d => d.gamesPlayed >= 50 },
+        new Def { Id = "eater_10", Text = "Ate 10 Cells", Condition = d => d.playersEaten >= 10 },
+        new Def { Id = "eater_100", Text = "Ate 100 Cells", Condition = d => d.playersEaten >= 100 },
+        new Def { Id = "spiked_10", Text = "Popped 10 Times", Condition = d => d.virusesEaten >= 10 },
+        new Def { Id = "level_5", Text = "Level 5", Condition = d => d.level >= 5 },
+        new Def { Id = "level_10", Text = "Level 10", Condition = d => d.level >= 10 },
     };
 
     /// <summary>Call after mutating data (mass/streak/etc.) - appends any newly-met achievement's id

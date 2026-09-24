@@ -16,7 +16,8 @@ public class PlayerData
     public int level;
     public int experience;
     public int foodEaten = 0;
-    public int virusesEaten = 0;
+    public int virusesEaten = 0;   // times a spike popped us (the server counts spike hits per life)
+    public int playersEaten = 0;   // cells eaten (players and bots)
     public int massGained = 0;
     public int massLost = 0;
     public int playtime = 0;
