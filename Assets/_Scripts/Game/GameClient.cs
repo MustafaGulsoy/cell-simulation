@@ -69,6 +69,12 @@ public class GameClient : MonoBehaviour
 
     /// <summary>Round-trip time in ms, or -1 if not measured yet.</summary>
     public int PingMs { get { return pingMs; } }
+
+    /// <summary>The direction last sent to the server (zero when idle or paused); PlayerBlob predicts with it.</summary>
+    public Vector2 InputDirection { get; private set; }
+
+    /// <summary>Half the measured round trip, in seconds (0 until the first pong).</summary>
+    public float OneWayDelaySeconds { get { return Mathf.Max(0, pingMs) * 0.0005f; } }
     public bool ConnectionLost { get { return welcomed && NowMs - Interlocked.Read(ref lastPacketMs) > CONNECTION_LOST_AFTER_MS; } }
     public bool Welcomed { get { return welcomed; } }
     public uint MyEntityId { get { return myEntityId; } }
@@ -300,6 +306,7 @@ public class GameClient : MonoBehaviour
             dir = joystick.Direction;
         }
 
+        InputDirection = dir;
         SendInput(dir);
 
         if (dir != Vector2.zero && myBlob.playerHud != null)

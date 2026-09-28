@@ -35,7 +35,9 @@ public static class InterestManager
     public static float WantedOrthoSize(IReadOnlyList<PlayerEntity> own, Vector2 centre, float extent)
     {
         float biggest = own.Max(p => p.Scale);
-        float forPrimary = MathF.Max((biggest + 26f) / 1.4f, 20f);
+        // The old (v1.1) client formula stays in the max so shipped clients keep seeing their whole screen;
+        // current clients zoom by biggest * 6 (PlayerBlob.CAMERA_SIZE_PER_SCALE).
+        float forPrimary = MathF.Max(MathF.Max((biggest + 26f) / 1.4f, 20f), biggest * 6f);
         return MathF.Max(forPrimary, extent * 1.4f);
     }
 

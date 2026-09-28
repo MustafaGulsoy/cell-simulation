@@ -23,7 +23,10 @@ public class PlayerBlob : MonoBehaviour
     [SerializeField] public PlayerMovement playerMovement;
 
     [SerializeField] private CinemachineVirtualCamera virtualCamera;
-    private const float CAMERA_SIZE_MIN = 20f;
+    private const float CAMERA_SIZE_MIN = 10f;
+    // Camera half-height per unit of cell scale: fixes the cell at ~8% of the screen height at any size.
+    // Server mirror: InterestManager.WantedOrthoSize.
+    private const float CAMERA_SIZE_PER_SCALE = 6f;
     private float nextOrthographicSize = CAMERA_SIZE_MIN;
 
     [SerializeField] private SortingGroup sortingGroup;
@@ -65,7 +68,7 @@ public class PlayerBlob : MonoBehaviour
     // split launches an otherwise-still blob, since there's no prior motion to mask the teleport.
     // Smoothing toward the latest reported position every frame (below) turns that into a
     // continuous slide instead, without adding perceptible input lag at this network tick rate.
-    private const float PositionSmoothingRate = 20f;
+    private const float PositionSmoothingRate = 30f;
     private Vector2 targetPosition;
     private bool hasTargetPosition;
 
@@ -144,6 +147,7 @@ public class PlayerBlob : MonoBehaviour
     public void ApplyState(Vector2 position, float scale, Color color, float mass)
     {
         targetPosition = position;
+        serverPositionTime = Time.unscaledTime;
         if (!hasTargetPosition)
         {
             hasTargetPosition = true;
@@ -173,7 +177,6 @@ public class PlayerBlob : MonoBehaviour
             if (displayScale < 0f) displayScale = scale; // first sighting: nothing to ease from
             ApplyCombinedScale();
             UpdateOrderLayer((int)scale);
-            UpdateOrthographicSize(scale);
 
             if (poppedSmaller)
             {
@@ -206,7 +209,35 @@ public class PlayerBlob : MonoBehaviour
             return;
         }
 
-        transform.position = Vector2.Lerp(transform.position, targetPosition, 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
+        transform.position = Vector2.Lerp(transform.position, PredictedTarget(), 1f - Mathf.Exp(-PositionSmoothingRate * Time.deltaTime));
+    }
+
+    // Client-side prediction for the local cell. The last snapshot shows where the server had the cell
+    // about half a round trip ago; the cell has since kept moving along the joystick direction, and it
+    // reacts to a new direction immediately instead of waiting a full round trip for the echo.
+    // Mirrors the server's steering (GameWorld.MoveEntity): full speed along the input direction, none
+    // without input. Anything unpredicted (walls, launches, merges) is reconciled by the smoothing.
+    // ponytail: speed formula is a copy of Rules.MovementSpeedForMass with the default GameConfig values;
+    // if the server's MaxSpeed/MinSpeed/ScoreToSpeedMultiplier are tuned, the lead is just slightly off.
+    private const float PredictionMaxLeadSeconds = 0.15f;
+    private float serverPositionTime;
+
+    private Vector2 PredictedTarget()
+    {
+        if (!isMine || GameClient.instance == null) return targetPosition;
+
+        Vector2 dir = GameClient.instance.InputDirection;
+        if (dir.sqrMagnitude < 0.0001f) return targetPosition;
+
+        float lead = Mathf.Min(PredictionMaxLeadSeconds, GameClient.instance.OneWayDelaySeconds + (Time.unscaledTime - serverPositionTime));
+        float speed = Mathf.Clamp(24.4f / (1f + 0.06f * (Mathf.Sqrt(currentMass) - Mathf.Sqrt(MASS_MIN))), 3f, 24.4f);
+        if ((currentEffects & 1) != 0) speed *= 1.5f;
+
+        Vector2 predicted = targetPosition + dir.normalized * speed * lead;
+        float radius = Mathf.Max(0f, currentScale) * 0.5f;
+        predicted.x = Mathf.Clamp(predicted.x, -(Map.halfMapSize - radius), Map.halfMapSize - radius);
+        predicted.y = Mathf.Clamp(predicted.y, -(Map.halfMapHeight - radius), Map.halfMapHeight - radius);
+        return predicted;
     }
 
     private void LateUpdate()
@@ -218,11 +249,14 @@ public class PlayerBlob : MonoBehaviour
 
         UpdateCameraFocus();
 
+        // Follow the eased (drawn) scale so the camera grows in step with the cell instead of trailing it.
+        if (displayScale >= 0f) UpdateOrthographicSize(displayScale);
+
         // Zoom for the primary piece's size, but never tighter than the whole group needs.
         float targetSize = Mathf.Max(nextOrthographicSize, Mathf.Min(groupExtent * CAMERA_GROUP_MARGIN, Map.orthographicSpectatingSize));
         if (virtualCamera.m_Lens.OrthographicSize != targetSize)
         {
-            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, targetSize, 3f * Time.deltaTime);
+            virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, targetSize, 1f - Mathf.Exp(-8f * Time.deltaTime));
         }
     }
 
@@ -332,12 +366,9 @@ public class PlayerBlob : MonoBehaviour
         blobDetailCanvas.sortingOrder = order;
     }
 
-    // Proportional to scale (not scale+offset) so the blob's apparent screen size stays constant
-    // as it grows - an affine formula here made bigger blobs look bigger on screen too.
     private void UpdateOrthographicSize(float scale)
     {
-        float calc = scale / 1.4f;
-        nextOrthographicSize = Mathf.Clamp(calc, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
+        nextOrthographicSize = Mathf.Clamp(scale * CAMERA_SIZE_PER_SCALE, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
     }
 
     /// <summary>Called by GameClient when it relays a ServerMsg.EmojiEvent for this entity - shows a
