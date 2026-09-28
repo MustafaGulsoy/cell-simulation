@@ -332,10 +332,11 @@ public class PlayerBlob : MonoBehaviour
         blobDetailCanvas.sortingOrder = order;
     }
 
+    // Proportional to scale (not scale+offset) so the blob's apparent screen size stays constant
+    // as it grows - an affine formula here made bigger blobs look bigger on screen too.
     private void UpdateOrthographicSize(float scale)
     {
-        float m = Mathf.Sqrt(scale + 26);
-        float calc = (m * m) / 1.4f;
+        float calc = scale / 1.4f;
         nextOrthographicSize = Mathf.Clamp(calc, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
     }
 

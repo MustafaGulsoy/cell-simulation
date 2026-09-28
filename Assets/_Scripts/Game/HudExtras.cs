@@ -102,10 +102,20 @@ public class HudExtras : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.Escape)) SetPaused(!Paused);
     }
 
-    // Coming back from the phone's settings / another app lands on the pause menu, not mid-fight.
+    // The server drops a silent client after 10 s (GameLoopService.StaleTimeout) and the OS may have killed
+    // the UDP socket, so after a long absence the old session is dead: rejoin with a fresh one. A short
+    // absence just carries on (the pause menu used to open here, which read as the cell being frozen).
+    private System.DateTime backgroundedAt = System.DateTime.MaxValue;
     private void OnApplicationPause(bool pause)
     {
-        if (pause) SetPaused(true);
+        if (pause)
+        {
+            backgroundedAt = System.DateTime.UtcNow;
+        }
+        else if ((System.DateTime.UtcNow - backgroundedAt).TotalSeconds > 8.0)
+        {
+            UnityEngine.SceneManagement.SceneManager.LoadScene("Game", UnityEngine.SceneManagement.LoadSceneMode.Single);
+        }
     }
 
     private void BuildMuteButton()
