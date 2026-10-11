@@ -73,6 +73,12 @@ def write(name, samples):
 dur = 0.09
 write("eat", render(dur, lambda t, i, d: math.sin(sweep(620, 940, t, d)) * env_exp(t, d, decay=5)))
 
+# gulp: swallowing a player/bot - a deeper two-stage "glug", distinct from the pellet blip
+dur = 0.3
+write("gulp", render(dur, lambda t, i, d: (
+    math.sin(sweep(260, 90, t, d)) * (0.6 + 0.4 * math.sin(2 * math.pi * 14 * t))
+) * env_exp(t, d, attack=0.015, decay=4.5)))
+
 # split / pop: a low 'whoomp' with a puff of filtered noise
 dur = 0.28
 noise = lowpass([rng.uniform(-1, 1) for _ in range(int(RATE * dur))], 1400)

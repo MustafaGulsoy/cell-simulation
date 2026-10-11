@@ -695,10 +695,14 @@ public class GameClient : MonoBehaviour
         }
         // A pellet eaten by ANY piece: the HUD only ever saw the primary's mass, so once split the other
         // pieces ate in silence. Total mass across all pieces rises by a pellet's worth; splits and merges
-        // conserve it, so only compare while the piece count is unchanged.
-        if (ownPieces.Count == lastOwnPieceCount && totalMass > lastOwnTotalMass + 0.05f && totalMass - lastOwnTotalMass <= 2.5f * ownPieces.Count)
+        // conserve it, so only compare while the piece count is unchanged. A jump bigger than a pellet's
+        // worth means a player/bot got swallowed instead - a deeper "gulp" instead of the pellet blip.
+        float massGain = totalMass - lastOwnTotalMass;
+        if (ownPieces.Count == lastOwnPieceCount && massGain > 0.05f)
         {
-            GameAudio.Play("eat", 0.35f, 0.12f, 0.07f);
+            bool ateCreature = massGain > 2.5f * ownPieces.Count;
+            if (ateCreature) GameAudio.Play("gulp", 0.8f, 0.08f, 0.1f);
+            else GameAudio.Play("eat", 0.35f, 0.12f, 0.07f);
         }
         lastOwnTotalMass = totalMass;
         lastOwnPieceCount = ownPieces.Count;

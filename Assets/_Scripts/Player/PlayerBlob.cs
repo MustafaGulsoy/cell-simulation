@@ -24,10 +24,19 @@ public class PlayerBlob : MonoBehaviour
 
     [SerializeField] private CinemachineVirtualCamera virtualCamera;
     private const float CAMERA_SIZE_MIN = 10f;
-    // Camera half-height per unit of cell scale: fixes the cell at ~8% of the screen height at any size.
-    // Server mirror: InterestManager.WantedOrthoSize.
-    private const float CAMERA_SIZE_PER_SCALE = 6f;
+    // Logarithmic instead of linear: a straight scale*k kept the cell at a fixed ~8% of the screen
+    // forever, so it never visually looked bigger no matter how much mass it ate. Log growth still
+    // zooms out as it grows (so it doesn't outrun the screen) but tapers, so bigger mass reads as a
+    // bigger-looking cell. Always <= the old linear value, so InterestManager (which still sizes its
+    // send radius off the old formula) only ever over-sends a little rather than clipping anything.
+    private const float CAMERA_SIZE_LOG_SCALE = 30f;
+    private const float CAMERA_LOG_BASE_SCALE = 2f; // matches server Rules.BlobScaleMin
     private float nextOrthographicSize = CAMERA_SIZE_MIN;
+
+    // A quick zoom-out "kick" the instant a split happens, so the extra camera pull-back from the
+    // new piece reads as a sudden motion cue instead of a slow drift.
+    private float cameraKick = 1f;
+    private Coroutine cameraKickCoroutine;
 
     [SerializeField] private SortingGroup sortingGroup;
     [SerializeField] public Canvas blobDetailCanvas;
@@ -181,7 +190,11 @@ public class PlayerBlob : MonoBehaviour
             if (poppedSmaller)
             {
                 PlayPopAnimation();
-                if (isMine) GameAudio.Play("split", 0.9f);
+                if (isMine)
+                {
+                    GameAudio.Play("split", 0.9f);
+                    PlayCameraKick();
+                }
             }
         }
 
@@ -253,7 +266,7 @@ public class PlayerBlob : MonoBehaviour
         if (displayScale >= 0f) UpdateOrthographicSize(displayScale);
 
         // Zoom for the primary piece's size, but never tighter than the whole group needs.
-        float targetSize = Mathf.Max(nextOrthographicSize, Mathf.Min(groupExtent * CAMERA_GROUP_MARGIN, Map.orthographicSpectatingSize));
+        float targetSize = Mathf.Max(nextOrthographicSize, Mathf.Min(groupExtent * CAMERA_GROUP_MARGIN, Map.orthographicSpectatingSize)) * cameraKick;
         if (virtualCamera.m_Lens.OrthographicSize != targetSize)
         {
             virtualCamera.m_Lens.OrthographicSize = Mathf.Lerp(virtualCamera.m_Lens.OrthographicSize, targetSize, 1f - Mathf.Exp(-8f * Time.deltaTime));
@@ -368,7 +381,31 @@ public class PlayerBlob : MonoBehaviour
 
     private void UpdateOrthographicSize(float scale)
     {
-        nextOrthographicSize = Mathf.Clamp(scale * CAMERA_SIZE_PER_SCALE, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
+        float size = CAMERA_SIZE_MIN + CAMERA_SIZE_LOG_SCALE * Mathf.Log(Mathf.Max(1f, scale / CAMERA_LOG_BASE_SCALE));
+        nextOrthographicSize = Mathf.Clamp(size, CAMERA_SIZE_MIN, Map.orthographicSpectatingSize);
+    }
+
+    private void PlayCameraKick()
+    {
+        if (cameraKickCoroutine != null) StopCoroutine(cameraKickCoroutine);
+        cameraKickCoroutine = StartCoroutine(CameraKickAnimation());
+    }
+
+    private IEnumerator CameraKickAnimation()
+    {
+        const float duration = 0.35f;
+        const float peak = 1.18f;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            cameraKick = Mathf.LerpUnclamped(peak, 1f, Mathf.Clamp01(elapsed / duration));
+            yield return null;
+        }
+
+        cameraKick = 1f;
+        cameraKickCoroutine = null;
     }
 
     /// <summary>Called by GameClient when it relays a ServerMsg.EmojiEvent for this entity - shows a

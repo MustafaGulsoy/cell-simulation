@@ -11,11 +11,41 @@ public class BlobCircle : MonoBehaviour
 
     private Vector3[] polygonPoints;
     private int[] polygonTriangles;
+    private float baseRadius;
+
+    // Small per-frame membrane jiggle around the rim, purely cosmetic. wobblePhase is randomised per
+    // instance so a cluster of blobs doesn't pulse in lockstep.
+    // ponytail: rewrites every vertex every frame (cheap at this blob count); move to a vertex shader
+    // if the live blob count ever grows into the hundreds.
+    private const float WobbleAmplitude = 0.035f;
+    private const float WobbleFrequency = 5f;
+    private const float WobbleSpeed = 2.2f;
+    private float wobblePhase;
 
     private void Awake()
     {
         mesh = new Mesh();
         filter.mesh = mesh;
+        wobblePhase = Random.value * Mathf.PI * 2f;
+    }
+
+    private void Update()
+    {
+        if (polygonPoints == null || !meshRenderer.enabled) return;
+
+        float t = Time.time * WobbleSpeed + wobblePhase;
+        int sides = polygonPoints.Length;
+        for (int i = 0; i < sides; i++)
+        {
+            float angle = (float)i / sides * 2f * Mathf.PI;
+            float r = baseRadius * (1f + WobbleAmplitude * Mathf.Sin(angle * WobbleFrequency + t));
+            float x = Mathf.Cos(angle) * r;
+            float y = Mathf.Sin(angle) * r;
+            polygonPoints[i] = new Vector3(x, y, 0f);
+            if (lineRenderer.enabled) lineRenderer.SetPosition(i, new Vector3(x, y, 0f));
+        }
+        mesh.vertices = polygonPoints;
+        mesh.RecalculateBounds();
     }
 
     public void Spawn()
@@ -32,6 +62,7 @@ public class BlobCircle : MonoBehaviour
 
     public void DrawLine(int steps, float radius, Color color)
     {
+        baseRadius = radius;
         lineRenderer.positionCount = steps;
         lineRenderer.loop = true;
         lineRenderer.startWidth = 0.6f;
@@ -59,6 +90,7 @@ public class BlobCircle : MonoBehaviour
 
     public void DrawFilledMesh(int sides, float radius, Color color)
     {
+        baseRadius = radius;
         polygonPoints = GetCircumferencePoints(sides, radius).ToArray();
         polygonTriangles = DrawFilledTriangles(polygonPoints);
 
