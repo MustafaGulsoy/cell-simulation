@@ -337,8 +337,9 @@ public static class Protocol
 
     /// <summary>ClientVersion 0 = a client that predates versioning (sends nothing after the map
     /// size). New features that older clients can't render (power-ups, compact snapshots) are only
-    /// sent to clients that announce a version that understands them. PreferredColor is optional.</summary>
-    public readonly record struct JoinMsg(string Username, MapSize MapSize, byte ClientVersion = 0, Rgba? PreferredColor = null);
+    /// sent to clients that announce a version that understands them. PreferredColor is optional.
+    /// Mode (FFA/Teams) is only read from version >= 3.</summary>
+    public readonly record struct JoinMsg(string Username, MapSize MapSize, byte ClientVersion = 0, Rgba? PreferredColor = null, GameMode Mode = GameMode.Ffa);
     public readonly record struct InputMsg(Vector2 Direction);
     public readonly record struct EmojiMsg(byte EmojiId);
 
@@ -363,15 +364,19 @@ public static class Protocol
                     var mapSize = (MapSize)r.ReadByte();
 
                     // Optional trailing fields (absent from clients that predate them):
-                    // [version][r][g][b] - the player's chosen colour, sent by version >= 2.
+                    // [version][mode (v3+)][r][g][b] - the game mode and the player's chosen colour.
+                    // Mode is read right after version (fixed 1 byte) so its position never depends
+                    // on whether colour bytes follow.
                     byte version = 0;
+                    GameMode mode = GameMode.Ffa;
                     Rgba? color = null;
                     if (ms.Position < ms.Length) version = r.ReadByte();
+                    if (version >= 3 && ms.Position < ms.Length) mode = (GameMode)r.ReadByte();
                     if (version >= 2 && ms.Length - ms.Position >= 3)
                     {
                         color = new Rgba { R = r.ReadByte(), G = r.ReadByte(), B = r.ReadByte(), A = 255 };
                     }
-                    join = new JoinMsg(username, mapSize, version, color);
+                    join = new JoinMsg(username, mapSize, version, color, mode);
                     return true;
                 case ClientMsg.Input:
                     input = new InputMsg(new Vector2(r.ReadSingle(), r.ReadSingle()));

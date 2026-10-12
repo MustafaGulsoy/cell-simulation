@@ -16,6 +16,10 @@ public sealed class PlayerEntity : Entity
     public uint GroupId;
     public DateTime MergeEligibleUtc = DateTime.MinValue;
 
+    // 0 = no team (FFA room). Set once at AddPlayer and inherited by every split clone - see
+    // GameWorld.CreateClone. Same-team pairs can't eat or block each other (ResolveBlobEating).
+    public byte TeamId;
+
     // Merge animation (GameWorld.ResolveMerges/AdvanceAbsorptions): while AbsorbInto is set this
     // piece is gliding into that sibling and handing its mass over; it takes no part in anything
     // else (eating, collisions, steering) until it's gone.

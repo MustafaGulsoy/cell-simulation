@@ -164,6 +164,29 @@ public enum MapSize
     Small,
 }
 
+public enum GameMode : byte
+{
+    Ffa,
+    Teams,
+}
+
+public static class Teams
+{
+    public const int Count = 2;
+
+    // Fixed, unmistakable per-team colours - picked clear of Rules.VirusColor/SawColor's green so a
+    // teammate is never confused for a hazard. Overrides whatever skin colour the player picked:
+    // team mode trades personalisation for making "who's with me" readable at a glance.
+    public static readonly Rgba[] Colors =
+    {
+        new() { R = 225, G = 60, B = 60, A = 255 },   // 1: red
+        new() { R = 60, G = 130, B = 230, A = 255 },  // 2: blue
+    };
+
+    /// <summary>1-based team id -> its colour. TeamId 0 (no team / FFA) has no colour of its own.</summary>
+    public static Rgba ColorOf(byte teamId) => Colors[Math.Clamp(teamId - 1, 0, Colors.Length - 1)];
+}
+
 public static class MapSizes
 {
     // The dropdown's four choices are multiples of the configured default (Small) map, keeping

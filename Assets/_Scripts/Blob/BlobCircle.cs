@@ -13,14 +13,18 @@ public class BlobCircle : MonoBehaviour
     private int[] polygonTriangles;
     private float baseRadius;
 
-    // Small per-frame membrane jiggle around the rim, purely cosmetic. wobblePhase is randomised per
-    // instance so a cluster of blobs doesn't pulse in lockstep.
-    // ponytail: rewrites every vertex every frame (cheap at this blob count); move to a vertex shader
-    // if the live blob count ever grows into the hundreds.
+    // Small membrane jiggle around the rim, purely cosmetic. wobblePhase is randomised per instance
+    // so a cluster of blobs doesn't pulse in lockstep. Stepped at WobbleStepSeconds rather than every
+    // render frame - the motion is slow/subtle enough that 20 Hz looks identical to 60 Hz, for a third
+    // of the per-blob vertex math and mesh re-upload (this runs once per visible blob, on a mobile target).
+    // ponytail: still a full CPU vertex rewrite per step; move to a vertex shader if the live blob
+    // count ever grows into the hundreds.
     private const float WobbleAmplitude = 0.035f;
     private const float WobbleFrequency = 5f;
     private const float WobbleSpeed = 2.2f;
+    private const float WobbleStepSeconds = 0.05f;
     private float wobblePhase;
+    private float nextWobbleTime;
 
     private void Awake()
     {
@@ -32,6 +36,8 @@ public class BlobCircle : MonoBehaviour
     private void Update()
     {
         if (polygonPoints == null || !meshRenderer.enabled) return;
+        if (Time.time < nextWobbleTime) return;
+        nextWobbleTime = Time.time + WobbleStepSeconds;
 
         float t = Time.time * WobbleSpeed + wobblePhase;
         int sides = polygonPoints.Length;

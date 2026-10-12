@@ -59,11 +59,13 @@ public sealed class GameWorld
     public int SawCount { get; }
     public int PowerupCount { get; }
     public int PlayerCapacity { get; }
+    public bool TeamsEnabled { get; }
 
-    public GameWorld(MapSize mapSize)
+    public GameWorld(MapSize mapSize, bool teamsEnabled = false)
     {
         var (width, height) = MapSizes.Dimensions(mapSize);
         Size = mapSize;
+        TeamsEnabled = teamsEnabled;
         HalfWidth = width / 2f;
         HalfHeight = height / 2f;
 
@@ -279,10 +281,34 @@ public sealed class GameWorld
                 EndPoint = endPoint,
             };
             player.GroupId = player.Id;
+            if (TeamsEnabled)
+            {
+                player.TeamId = PickBalancedTeam();
+                player.Color = Teams.ColorOf(player.TeamId);
+            }
             _players[player.Id] = player;
             _stats[player.GroupId] = new LifeStats { PeakMass = player.Mass };
             return player;
         }
+    }
+
+    /// <summary>The team (1-based) with fewer distinct players right now (ties favour the lower
+    /// id). Counts GroupId, not raw pieces, so a split player doesn't make their own team look fuller.</summary>
+    private byte PickBalancedTeam()
+    {
+        var counts = new int[Teams.Count];
+        foreach (var groupId in _players.Values.Where(p => p.TeamId != 0).Select(p => p.GroupId).Distinct())
+        {
+            var any = _players.Values.First(p => p.GroupId == groupId);
+            counts[any.TeamId - 1]++;
+        }
+
+        int best = 0;
+        for (int i = 1; i < counts.Length; i++)
+        {
+            if (counts[i] < counts[best]) best = i;
+        }
+        return (byte)(best + 1);
     }
 
     public void RemovePlayer(uint id)
@@ -423,6 +449,7 @@ public sealed class GameWorld
             Position = source.Position,
             Mass = mass,
             Color = source.Color,
+            TeamId = source.TeamId,
             Name = source.Name,
             EndPoint = source.EndPoint,
             InputDirection = source.InputDirection,
@@ -1256,8 +1283,10 @@ public sealed class GameWorld
                 if (!IsAlive(a) || !IsAlive(b)) continue;
 
                 // Split siblings never devour/block each other - ResolveSplitSeparation and
-                // ResolveMerges own that relationship instead.
-                if (a is PlayerEntity pa && b is PlayerEntity pb && pa.GroupId == pb.GroupId) continue;
+                // ResolveMerges own that relationship instead. Teammates get the same treatment:
+                // no friendly fire, and they can pass through each other instead of blocking.
+                if (a is PlayerEntity pa && b is PlayerEntity pb &&
+                    (pa.GroupId == pb.GroupId || (pa.TeamId != 0 && pa.TeamId == pb.TeamId))) continue;
 
                 // Spike-pop bot siblings likewise shouldn't immediately cannibalize each
                 // other - bots have no merge system to recombine them, so this immunity is

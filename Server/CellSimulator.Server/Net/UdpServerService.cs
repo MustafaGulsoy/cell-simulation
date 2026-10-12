@@ -100,7 +100,7 @@ public sealed class UdpServerService : BackgroundService
                     break; // silent: the client just keeps retrying, and stops costing us anything once its window passes
                 }
 
-                var room = _rooms.JoinOrCreateRoom(from, join.MapSize);
+                var room = _rooms.JoinOrCreateRoom(from, join.MapSize, join.Mode);
                 var player = room.World.AddPlayer(join.Username, from, join.PreferredColor);
                 room.Sessions[from] = player.Id;
                 room.State[from] = new SessionState { ClientVersion = join.ClientVersion };

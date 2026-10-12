@@ -24,18 +24,18 @@ public sealed class RoomManager
         get { lock (_gate) { return _rooms.ToArray(); } }
     }
 
-    /// <summary>requestedSize comes from the client's Join packet (its map-size dropdown
-    /// selection) - only rooms of that same size are matched/created, so "Small" players never
-    /// land in a "Huge" room and vice versa.</summary>
-    public Room JoinOrCreateRoom(IPEndPoint endPoint, MapSize? requestedSize = null)
+    /// <summary>requestedSize/mode come from the client's Join packet (its map-size and game-mode
+    /// dropdown selections) - only rooms matching both are matched/created, so "Small" players
+    /// never land in a "Huge" room, and a Teams player never lands in an FFA one or vice versa.</summary>
+    public Room JoinOrCreateRoom(IPEndPoint endPoint, MapSize? requestedSize = null, GameMode mode = GameMode.Ffa)
     {
         var size = requestedSize ?? _defaultMapSize;
         lock (_gate)
         {
-            var room = _rooms.FirstOrDefault(r => !r.IsFull && r.MapSize == size);
+            var room = _rooms.FirstOrDefault(r => !r.IsFull && r.MapSize == size && r.Mode == mode);
             if (room == null)
             {
-                room = new Room(size);
+                room = new Room(size, mode);
                 _rooms.Add(room);
             }
             _roomByEndpoint[endPoint] = room;

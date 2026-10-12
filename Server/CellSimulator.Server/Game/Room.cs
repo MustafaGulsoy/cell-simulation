@@ -17,14 +17,15 @@ public sealed class Room
     /// <summary>Everything the server remembers about one connection besides which entity it controls.</summary>
     public ConcurrentDictionary<IPEndPoint, SessionState> State { get; } = new();
 
-    public Room(MapSize mapSize)
+    public Room(MapSize mapSize, GameMode mode = GameMode.Ffa)
     {
-        World = new GameWorld(mapSize);
+        World = new GameWorld(mapSize, mode == GameMode.Teams);
         World.Initialize();
     }
 
     public bool IsFull => World.DistinctPlayerCount >= World.PlayerCapacity;
     public MapSize MapSize => World.Size;
+    public GameMode Mode => World.TeamsEnabled ? GameMode.Teams : GameMode.Ffa;
 }
 
 /// <summary>Per-connection bookkeeping used by the network layer.</summary>

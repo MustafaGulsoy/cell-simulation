@@ -13,8 +13,9 @@ using UnityEngine;
 // color; this class only mirrors it visually, plus the local extras (sound, HUD, stats).
 public class GameClient : MonoBehaviour
 {
-    /// <summary>Announced in Join: 2 = understands compact snapshots, power-ups, Died/Ping/Top messages.</summary>
-    public const byte ProtocolVersion = 2;
+    /// <summary>Announced in Join: 2 = understands compact snapshots, power-ups, Died/Ping/Top
+    /// messages. 3 = also sends a game-mode byte (FFA/Teams) right after the version.</summary>
+    public const byte ProtocolVersion = 3;
 
     private enum ClientMsg : byte { Join = 1, Input = 2, Split = 3, Eject = 4, Emoji = 5, Ping = 6, Top = 7 }
     private enum ServerMsg : byte { Welcome = 1, Snapshot = 2, FoodFull = 3, EmojiEvent = 4, Died = 5, SnapshotV2 = 6, Pong = 7, TopList = 8 }
@@ -326,8 +327,11 @@ public class GameClient : MonoBehaviour
         WriteString(w, username);
         w.Write((byte)PlayerPrefs.GetInt(MainMenuHandler.MapSizePrefKey, 3));
 
-        // Trailing fields older servers simply ignore: protocol version, and the colour the player picked (if any).
+        // Trailing fields older servers simply ignore: protocol version, the chosen game mode
+        // (always 1 byte, right after the version - see Protocol.TryDecodeClientMsg), and the
+        // colour the player picked (if any).
         w.Write(ProtocolVersion);
+        w.Write((byte)PlayerPrefs.GetInt(MainMenuHandler.GameModePrefKey, 0));
         int skin = PlayerPrefs.GetInt(SkinPicker.SkinPrefKey, -1);
         if (skin >= 0)
         {

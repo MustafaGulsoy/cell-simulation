@@ -17,6 +17,11 @@ public class MainMenuHandler : MonoBehaviour
     private static readonly List<string> MapSizeOptions = new() { "Huge", "Large", "Medium", "Small" };
     private const int DefaultMapSizeIndex = 3; // Small
 
+    // Must match Server/CellSimulator.Server/Game/Rules.cs' GameMode enum ordinal order (0 = Ffa,
+    // 1 = Teams) - GameClient sends this raw byte in the Join packet (ProtocolVersion >= 3).
+    public const string GameModePrefKey = "gameMode";
+    private static readonly string[] GameModeLabels = { "Mode: FFA", "Mode: Teams" };
+
     [SerializeField] private Button playButton;
     [SerializeField] private Button infoButton;
     [SerializeField] private Button discordButton;
@@ -60,6 +65,22 @@ public class MainMenuHandler : MonoBehaviour
         });
     }
 
+    // No scene/dropdown edits needed, same trick as the theme button: cycles through the available
+    // modes and persists the choice, right below it.
+    private void BuildGameModeButton(Transform parent)
+    {
+        int mode = PlayerPrefs.GetInt(GameModePrefKey, 0) % GameModeLabels.Length;
+        var button = RuntimeUi.ButtonWithLabel("GameMode", parent, GameModeLabels[mode], 22f, TopAnchor, new Vector2(1f, 1f), TopOffset + new Vector2(0f, -112f), new Vector2(190f, 46f), new Color(0.15f, 0.2f, 0.34f, 0.92f));
+        var label = button.GetComponentInChildren<TextMeshProUGUI>();
+        button.onClick.AddListener(delegate
+        {
+            mode = (mode + 1) % GameModeLabels.Length;
+            PlayerPrefs.SetInt(GameModePrefKey, mode);
+            label.text = GameModeLabels[mode];
+            GameAudio.Play("click");
+        });
+    }
+
     private void Awake() {
         GameAudio.ApplySavedVolume();
 
@@ -81,6 +102,7 @@ public class MainMenuHandler : MonoBehaviour
         SkinPicker.Build(extras.transform, SkinAnchor, new Vector2(0.5f, 0f), SkinOffset);
         LeaderboardPanel.Create(extras.transform, TopAnchor, new Vector2(1f, 1f), TopOffset);
         BuildThemeButton(extras.transform);
+        BuildGameModeButton(extras.transform);
 
         // Server address is fixed - players never see or edit it.
         if(serverIpInput != null)
