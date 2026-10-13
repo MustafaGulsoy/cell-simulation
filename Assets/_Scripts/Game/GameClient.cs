@@ -786,8 +786,10 @@ public class GameClient : MonoBehaviour
         playerData.virusesEaten += spikesHit;
         playerData.massGained += Mathf.RoundToInt(peakMass);
 
+        int tiersBefore = RoyalPass.UnlockedCount(playerData);
         int gainedXp = Progression.ExperienceForLife(peakMass, survivedSeconds, blobsEaten);
         int levelsGained = Progression.AddExperience(playerData, gainedXp);
+        int tiersGained = RoyalPass.UnlockedCount(playerData) - tiersBefore;
 
         var newlyUnlocked = Achievements.CheckNewlyUnlocked(playerData);
         PlayerHandleData.Save(playerData);
@@ -800,6 +802,7 @@ public class GameClient : MonoBehaviour
         if (blob.playerHud != null)
         {
             string extra = Progression.SummaryLine(killerName, gainedXp, playerData.level, levelsGained);
+            if (tiersGained > 0) extra += "\nRoyal Pass tier unlocked - new colour in the picker!";
             blob.playerHud.ShowMatchSummary(peakMass, survivedSeconds, isNewRecord, newlyUnlocked, extra);
         }
     }

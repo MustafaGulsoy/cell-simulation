@@ -81,6 +81,19 @@ public class MainMenuHandler : MonoBehaviour
         });
     }
 
+    // A pure status line (no interaction, so nothing to wire) - the actual reward is the extra
+    // swatch that shows up in SkinPicker's row once a tier is reached (see SkinPicker.Build).
+    private void BuildRoyalPassLabel(Transform parent)
+    {
+        var data = PlayerHandleData.LoadOrDefault();
+        int unlocked = RoyalPass.UnlockedCount(data);
+        int nextLevel = RoyalPass.NextUnlockLevel(data);
+        string text = nextLevel < 0
+            ? $"Royal Pass: {unlocked}/{RoyalPass.TierCount} (all unlocked)"
+            : $"Royal Pass: {unlocked}/{RoyalPass.TierCount} - next at Lv {nextLevel}";
+        RuntimeUi.Label("RoyalPassStatus", parent, text, 18f, TopAnchor, new Vector2(1f, 1f), TopOffset + new Vector2(0f, -168f), new Vector2(260f, 30f), TextAlignmentOptions.Right);
+    }
+
     private void Awake() {
         GameAudio.ApplySavedVolume();
 
@@ -103,6 +116,7 @@ public class MainMenuHandler : MonoBehaviour
         LeaderboardPanel.Create(extras.transform, TopAnchor, new Vector2(1f, 1f), TopOffset);
         BuildThemeButton(extras.transform);
         BuildGameModeButton(extras.transform);
+        BuildRoyalPassLabel(extras.transform);
 
         // Server address is fixed - players never see or edit it.
         if(serverIpInput != null)

@@ -38,12 +38,19 @@ public static class SkinPicker
         return new Color32((byte)((packed >> 16) & 0xFF), (byte)((packed >> 8) & 0xFF), (byte)(packed & 0xFF), 255);
     }
 
-    /// <summary>Builds the picker under <paramref name="parent"/>. Returns a refresh action (highlights the chosen swatch).</summary>
+    /// <summary>Builds the picker under <paramref name="parent"/>. Royal Pass reward colours
+    /// (RoyalPass.UnlockedColors) are appended after the free palette - the row simply grows by one
+    /// swatch each time a tier is reached, with nothing to build for a still-locked one.</summary>
     public static void Build(Transform parent, Vector2 anchor, Vector2 pivot, Vector2 offset)
     {
+        var rewards = RoyalPass.UnlockedColors(PlayerHandleData.LoadOrDefault());
+        var swatches = new Color32[Palette.Length + rewards.Count];
+        Palette.CopyTo(swatches, 0);
+        rewards.CopyTo(swatches, Palette.Length);
+
         const float swatch = 52f;
         const float gap = 8f;
-        int count = Palette.Length + 1; // + "random"
+        int count = swatches.Length + 1; // + "random"
         float width = count * swatch + (count - 1) * gap + 24f;
 
         var panel = RuntimeUi.Panel("SkinPicker", parent, anchor, pivot, offset, new Vector2(width, swatch + 50f), RuntimeUi.PanelColor);
@@ -52,8 +59,8 @@ public static class SkinPicker
         var outlines = new Image[count];
         for (int i = 0; i < count; i++)
         {
-            bool isRandom = i == Palette.Length;
-            Color32 colour = isRandom ? new Color32(90, 96, 110, 255) : Palette[i];
+            bool isRandom = i == swatches.Length;
+            Color32 colour = isRandom ? new Color32(90, 96, 110, 255) : swatches[i];
             int packed = isRandom ? -1 : Pack(colour);
             float x = 12f + i * (swatch + gap);
 
@@ -73,10 +80,10 @@ public static class SkinPicker
         }
 
         int saved = PlayerPrefs.GetInt(SkinPrefKey, -1);
-        int selected = Palette.Length;
-        for (int i = 0; i < Palette.Length; i++)
+        int selected = swatches.Length;
+        for (int i = 0; i < swatches.Length; i++)
         {
-            if (Pack(Palette[i]) == saved) selected = i;
+            if (Pack(swatches[i]) == saved) selected = i;
         }
         Highlight(outlines, selected);
     }
