@@ -30,6 +30,10 @@ public static class RoyalPass
 
     public static int TierCount => Tiers.Length;
 
+    public static int LevelAt(int index) => Tiers[index].Level;
+
+    public static Color32 RewardAt(int index) => Tiers[index].Reward;
+
     public static int UnlockedCount(PlayerData data)
     {
         int n = 0;
